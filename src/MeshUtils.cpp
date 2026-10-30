@@ -3,6 +3,7 @@
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
 #include "mc/deps/minecraft_renderer/renderer/MeshData.h"
+#include "mc/deps/minecraft_renderer/renderer/Mesh.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
@@ -19,7 +20,7 @@ void captureMesh(BlockSource& region,BlockTessellator& blocks,Tessellator& tess,
     auto const& points=raw.mPositions.get();
     if(!points.empty()) {
         Mesh mesh;mesh.cell=cell;
-        mesh.primitive=static_cast<std::uint32_t>(raw.mMode.get());
+        mesh.primitive=static_cast<std::uint32_t>(raw.mMode);
         auto const* graphics=BlockGraphics::getForBlock(block);
         mesh.layer=graphics?static_cast<std::uint32_t>(graphics->getRenderLayer(region,pos)):0;
         mesh.vertices.reserve(points.size());
