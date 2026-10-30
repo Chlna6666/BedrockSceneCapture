@@ -94,7 +94,7 @@ std::string modelJson(Model const& model){
         if(!part)continue;
         if(!firstPart)o<<',';
         firstPart=false;
-        auto const parent=indices.find(part->mParent.get());
+        auto const parent=indices.find(part->mParent);
         o<<"{\"index\":"<<index<<",\"parent_index\":";
         if(parent!=indices.end())o<<parent->second;else o<<"null";
         o<<",\"position\":";vec3(o,part->mPos.get());
@@ -102,7 +102,7 @@ std::string modelJson(Model const& model){
         o<<",\"rotation\":";vec3(o,part->mRot.get());
         o<<",\"scale\":";vec3(o,part->mScale.get());
         o<<",\"texture_size\":";vec2(o,part->mTexSize.get());
-        o<<",\"visible\":"<<(part->mVisible.get()?"true":"false")
+        o<<",\"visible\":"<<(part->mVisible?"true":"false")
          <<",\"cubes\":[";
         bool firstCube=true;
         for(auto const& cube:part->mCubes.get()){
@@ -113,18 +113,18 @@ std::string modelJson(Model const& model){
             o<<",\"size\":";vec3(o,cube.mSize.get());
             o<<",\"rotation\":";vec3(o,cube.mRotation.get());
             o<<",\"pivot\":";vec3(o,cube.mCubePivot.get());
-            o<<",\"mirrored\":"<<(cube.mMirrored.get()?"true":"false")<<",\"faces\":[";
+            o<<",\"mirrored\":"<<(cube.mMirrored?"true":"false")<<",\"faces\":[";
             bool firstFace=true;
             auto const& faces=cube.mFaceData.get();
             for(std::size_t face=0;face<faces.size();++face){
                 if(!firstFace)o<<',';
                 firstFace=false;
                 o<<"{\"face\":"<<face
-                 <<",\"valid\":"<<(faces[face].mFaceValid.get()?"true":"false")
+                 <<",\"valid\":"<<(faces[face].mFaceValid?"true":"false")
                  <<",\"uv\":";vec2(o,faces[face].mUV.get());
                 o<<",\"uv_size\":";vec2(o,faces[face].mUVSize.get());
-                o<<",\"material_index\":"<<faces[face].mMaterialInstanceListIndex.get()
-                 <<",\"uv_rotation\":"<<static_cast<int>(faces[face].mUvRotation.get())<<'}';
+                o<<",\"material_index\":"<<faces[face].mMaterialInstanceListIndex
+                 <<",\"uv_rotation\":"<<static_cast<int>(faces[face].mUvRotation)<<'}';
             }
             o<<"]}";
         }
@@ -146,14 +146,14 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
                   std::size_t fromPos,std::size_t fromIdx){
     if(!armed.load(std::memory_order_relaxed))return;
     auto const* gfx=BlockGraphics::getForBlock(block);
-    if(!gfx || !requiredWorldShape(gfx->mBlockShape.get()))return;
+    if(!gfx || !requiredWorldShape(gfx->mBlockShape))return;
     auto& raw=tess.mMeshData.get();
     auto const& points=raw.mPositions.get();
     if(fromPos>points.size() || points.size()==fromPos ||
        points.size()-fromPos>MaxNativeVertices)return;
     std::array<std::uint32_t,7> ids{};
     ids[0]=block.mNetworkId;
-    auto* region=owner.mRegion.get();
+    auto* region=owner.mRegion;
     if(!region)return;
     // Only the six neighboring palette-state identities are read for the
     // already-rendered block. No chunk enumeration or independent tessellation.
@@ -167,7 +167,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     if(!lock.owns_lock()||seen.size()>=MaxDistinctScenes||!seen.emplace(ids).second)return;
     Mesh mesh;
     mesh.primitive=static_cast<std::uint32_t>(raw.mMode);
-    mesh.layer=static_cast<std::uint32_t>(gfx->mRenderLayer.get());
+    mesh.layer=static_cast<std::uint32_t>(gfx->mRenderLayer);
     auto const& normals=raw.mNormals.get();
     auto const& uv=raw.mTextureUVs[0].get();
     auto const& colors=raw.mColors.get();
