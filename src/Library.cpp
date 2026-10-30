@@ -212,8 +212,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         for(auto const& model:data.staticModels){
             try{
                 auto hash=sha256(model.geometryJson);
-                if(staticModelHashes.insert(hash).second)
+                if(!staticModelHashes.contains(hash)){
                     atomicFile(data.directory/"meshes"/(hash+".json"),model.geometryJson);
+                    staticModelHashes.insert(hash);
+                }
                 staticModelIndex.emplace(model.name,hash);
             }catch(std::exception const&){
                 ++writeFailures;
@@ -277,13 +279,16 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     try {
                         auto content = meshJson(mesh);
                         auto hash = sha256(content);
-                        if (writtenMeshes.insert(hash).second)
+                        auto textureSlotData=faceBindingJson(mesh,block,localUnmatched);
+                        if(!writtenMeshes.contains(hash)){
                             atomicFile(data.directory/"meshes"/(hash+".json"),content);
+                            writtenMeshes.insert(hash);
+                        }
                         layers.insert(mesh.layer);
                         if (!firstMesh) blocks << ',';
                         firstMesh=false;
                         blocks << quoted(hash);
-                        perMeshTextureSlots.push_back(faceBindingJson(mesh,block,localUnmatched));
+                        perMeshTextureSlots.push_back(std::move(textureSlotData));
                         ++meshRefs;
                     } catch (std::exception const&) {
                         ++writeFailures;

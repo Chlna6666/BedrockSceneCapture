@@ -107,9 +107,8 @@ void reset() {
     gWhiteReady=false;
 }
 Vec3 cameraPosition(BaseActorRenderContext const& ctx){
-    // Existing 26.51 render-context camera location: validate when changing SDK.
-    auto const* impl=reinterpret_cast<float const*>(ctx.mImpl.get());
-    return impl?Vec3{impl[10],impl[11],impl[12]}:Vec3{};
+    auto const& p=ctx.mScreenContext.camera.mPosition;
+    return Vec3{p.x,p.y,p.z};
 }
 void line(ChunkWire& chunk,Vec3 const& a,Vec3 const& b){
     if(chunk.lines.size()>=MaxLinesPerChunk){
