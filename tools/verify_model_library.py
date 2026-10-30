@@ -92,7 +92,7 @@ def validate(root: Path):
                             if slot is not None and mesh.get("uv_space")=="block_face_local":
                                 if variant is not None:
                                     errors.append("face-local texture must not use runtime atlas variant")
-                                if mesh.get("geometry_source")!="registry_visual_bounds":
+                                if mesh.get("geometry_source") not in ("registry_visual_bounds","registry_cross_planes"):
                                     errors.append("unrecognized face-local geometry provenance")
                                 continue
                             if slot is not None:

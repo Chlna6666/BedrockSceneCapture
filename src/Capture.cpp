@@ -35,6 +35,7 @@
 #include <memory>
 #include <array>
 #include <map>
+#include <tuple>
 #include <mutex>
 #include <set>
 #include <stdexcept>
@@ -111,7 +112,7 @@ struct Session {
     LocalPlayer* player{};
     std::vector<BlockType const*> registrationTypes;
     std::size_t typeCursor{},permutationCursor{};
-    std::map<std::pair<std::array<float,6>,std::uint32_t>,std::shared_ptr<Mesh const>> registryBoxCache;
+    std::map<std::tuple<int,std::array<float,6>,std::uint32_t>,std::shared_ptr<Mesh const>> registryBoxCache;
     std::unordered_map<BlockGraphics const*,std::shared_ptr<std::vector<TextureBinding> const>> textureCache;
     std::vector<std::string> geometryModels;
     std::size_t geometryCursor{};
@@ -251,9 +252,12 @@ void registerStates(Session& s,Clock::time_point started) {
             auto proxy=makeRegistryVisualBox(
                 visual,gfx->mBlockShape,
                 static_cast<std::uint32_t>(gfx->mRenderLayer));
+            if(!proxy)proxy=makeRegistryCrossPlanes(
+                visual,gfx->mBlockShape,
+                static_cast<std::uint32_t>(gfx->mRenderLayer));
             if(proxy && !entry.air && !entry.blockEntity){
                 entry.visualBoundsAvailable=true;
-                auto key=std::make_pair(entry.visualBounds,proxy->layer);
+                auto key=std::make_tuple(entry.nativeShape,entry.visualBounds,proxy->layer);
                 auto cachedMesh=s.registryBoxCache.find(key);
                 if(cachedMesh==s.registryBoxCache.end())
                     cachedMesh=s.registryBoxCache.emplace(

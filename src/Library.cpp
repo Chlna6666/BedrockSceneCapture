@@ -204,7 +204,7 @@ std::string meshJson(Mesh const& mesh) {
     s << "{\"schema\":1,\"topology\":\"triangles\",\"uv_complete\":"
       << (mesh.uvValid?"true":"false")
       << ",\"geometry_source\":\""
-      << (mesh.registryVisualBounds?"registry_visual_bounds":"native_world_tessellation")
+      << (mesh.registryCrossPlanes?"registry_cross_planes":(mesh.registryVisualBounds?"registry_visual_bounds":"native_world_tessellation"))
       << "\",\"uv_space\":\""
       << (mesh.registryVisualBounds?"block_face_local":"runtime_terrain_atlas")
       << "\",\"material\":\"terrain/layer_"

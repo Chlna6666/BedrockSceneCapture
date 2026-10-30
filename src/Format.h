@@ -9,7 +9,8 @@ struct Vertex {
 struct Mesh {
     std::uint32_t cell{}, layer{}, primitive{};
     bool uvValid{true};
-    bool registryVisualBounds{}; // CPU-generated proxy from registered native BlockGraphics bounds
+    bool registryVisualBounds{};
+    bool registryCrossPlanes{}; // CPU-generated proxy from registered native BlockGraphics bounds
     std::vector<std::uint32_t> faceSlots; // two triangles per Up/Down/North/South/West/East
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
