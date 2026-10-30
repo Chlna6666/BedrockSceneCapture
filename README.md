@@ -37,7 +37,7 @@ On F8, `F8 capture requested` should appear and the full output directory is log
 For a client build, `mods/BedrockSceneCapture/manifest.json` **must** have `"platform": "client"`.
 An unexpanded `${modPlatform}` placeholder causes LeviLamina to reject the mod entirely even if BLoader says its DLL was loaded;
 then neither F7 nor F8 can work. Always install the newly built DLL **and manifest.json** together, replacing the old package.
-The GitHub Actions build now verifies the packaged manifest and DLL as a hard failure before uploading the artifact.
+The GitHub Actions build now verifies the packaged manifest, DLL, and the exported `ll_memory_operator_overrided` symbol as hard failures before uploading the artifact. LeviLamina requires the official C++ allocation operators; a native DLL without them is rejected before mod callbacks run.
 
 ## Build
 

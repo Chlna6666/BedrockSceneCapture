@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +31,15 @@ def verify() -> None:
     dll = PACKAGE / expected["entry"]
     if not dll.is_file() or dll.stat().st_size == 0:
         raise SystemExit(f"Missing or empty packaged DLL: {dll}")
-    print(f"Verified LeviLamina client package: {PACKAGE} ({dll.stat().st_size} DLL bytes)")
+    # The loader rejects a native DLL unless it exports the symbol installed by
+    # ll/api/memory/MemoryOperators.h. Check the final PE export table, not source.
+    symbols = subprocess.run(
+        ["llvm-readobj", "--coff-exports", str(dll)],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    if "Name: ll_memory_operator_overrided" not in symbols:
+        raise SystemExit("DLL is missing LeviLamina's unified memory operator export")
+    print(f"Verified LeviLamina client package and memory operators: {PACKAGE} ({dll.stat().st_size} DLL bytes)")
 
 if __name__ == "__main__":
     verify()
