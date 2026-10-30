@@ -12,6 +12,20 @@ struct ModelSample {
     std::vector<Mesh> meshes;
     std::uint32_t missing{};
 };
+struct TextureBinding {
+    std::uint32_t slot{};
+    std::string defaultName;
+    std::string carriedName;
+    std::string atlasItem;
+    std::string sourcePath;
+    std::array<float,4> atlasUv{};
+    std::uint16_t tileWidth{},tileHeight{},sourceWidth{},sourceHeight{};
+    std::uint16_t pbrHandle{};
+};
+struct StaticModel {
+    std::string name;
+    std::string geometryJson;
+};
 struct BlockResource {
     std::string name;
     std::string stateNbtHex;
@@ -22,10 +36,12 @@ struct BlockResource {
     bool blockEntity{};
     bool air{};
     std::vector<ModelSample> samples;
+    std::vector<TextureBinding> textures;
 };
 struct LibraryData {
     std::filesystem::path directory;
     std::vector<BlockResource> blocks;
+    std::vector<StaticModel> staticModels;
     std::uint32_t registered{}, visitedChunks{}, skippedChunks{};
     std::uint32_t sampledBlocks{}, failedSamples{};
     bool cancelled{};
