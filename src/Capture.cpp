@@ -97,12 +97,10 @@ struct Session {
     LocalPlayer* player{};
     BlockSource* region{};
     std::vector<BlockType const*> registrationTypes;
-    std::size_t typeCursor{};
-    std::vector<Block const*> registrations;
+    std::size_t typeCursor{},permutationCursor{};
     std::unordered_map<Block const*,std::size_t> lookup;
     std::unordered_map<BlockGraphics const*,std::shared_ptr<std::vector<TextureBinding> const>> textureCache;
-    std::size_t registerCursor{};
-    std::vector<std::pair<std::string,BlockGeometry::Model const*>> geometryModels;
+    std::vector<std::string> geometryModels;
     std::size_t geometryCursor{};
     std::vector<ChunkPos> loadedChunks;
     std::size_t nextChunk{};
@@ -161,8 +159,16 @@ void begin(LocalPlayer* player) {
     // Expand registered permutations incrementally rather than blocking F8 startup.
     for(auto const& [name,type]:types)
         if(type)session->registrationTypes.emplace_back(type.get());
-    for(auto const& [name,model]:BlockGraphics::mModels()){
-        if(model)session->geometryModels.emplace_back(name,model.get());
+    {
+        // Model definitions can be rebuilt during a resource-pack reload.
+        // Store stable names only, and reacquire a guarded pointer on each tick.
+        std::unique_lock lock(BlockGraphics::mBlockModelAccess(),std::try_to_lock);
+        if(!lock.owns_lock()){
+            log().warn("F8: native model registry is updating; retry");
+            return;
+        }
+        for(auto const& [name,model]:BlockGraphics::mModels())
+            if(model)session->geometryModels.emplace_back(name);
     }
     if(session->registrationTypes.empty()){
         log().error("F8: no registered block permutations found");
@@ -202,19 +208,18 @@ void begin(LocalPlayer* player) {
 }
 void registerStates(Session& s,Clock::time_point started) {
     while(Clock::now()-started<std::chrono::milliseconds(3)){
-        if(s.registerCursor>=s.registrations.size()){
-            s.registrations.clear();
-            s.registerCursor=0;
-            if(s.typeCursor>=s.registrationTypes.size())break;
-            if(auto const* type=s.registrationTypes[s.typeCursor++]){
-                type->forEachBlockPermutation([&](Block const& permutation)->bool{
-                    s.registrations.emplace_back(&permutation);
-                    return true;
-                });
-            }
-            if(s.registrations.empty())continue;
+        if(s.typeCursor>=s.registrationTypes.size())break;
+        auto const* type=s.registrationTypes[s.typeCursor];
+        if(!type){++s.typeCursor;s.permutationCursor=0;continue;}
+        auto const& permutations=type->mBlockPermutations.get();
+        if(s.permutationCursor>=permutations.size()){
+            ++s.typeCursor;
+            s.permutationCursor=0;
+            continue;
         }
-        auto const* block=s.registrations[s.registerCursor++];
+        // One permutation per budget check: a single large native type must
+        // not enumerate its entire state vector on the game thread at once.
+        auto const* block=permutations[s.permutationCursor++].get();
         if(!block)continue;
         BlockResource entry;
         entry.name=block->getTypeName();
@@ -308,10 +313,14 @@ void registerStates(Session& s,Clock::time_point started) {
 }
 void registerNativeGeometry(Session& s,Clock::time_point start) {
     while(s.geometryCursor<s.geometryModels.size() &&
-          Clock::now()-start<std::chrono::milliseconds(3)) {
-        auto const& [name,model]=s.geometryModels[s.geometryCursor++];
-        if(!model)continue;
-        s.library.staticModels.emplace_back(StaticModel{name,serializeStaticGeometry(name,*model)});
+          Clock::now()-start<std::chrono::milliseconds(3)){
+        std::unique_lock lock(BlockGraphics::mBlockModelAccess(),std::try_to_lock);
+        if(!lock.owns_lock())return; // do not stall rendering during pack reload
+        auto const& name=s.geometryModels[s.geometryCursor++];
+        auto const& models=BlockGraphics::mModels();
+        auto it=models.find(name);
+        if(it==models.end()||!it->second)continue;
+        s.library.staticModels.emplace_back(StaticModel{name,serializeStaticGeometry(name,*it->second)});
     }
 }
 std::string neighborhood(BlockSource& region, BlockPos const& p) {
@@ -351,8 +360,7 @@ bool sampleBlock(Session& s,Block const& block,BlockPos const& pos) {
 }
 void advance(Session& s) {
     auto tickStart=Clock::now();
-    if(s.typeCursor<s.registrationTypes.size() ||
-       s.registerCursor<s.registrations.size()) {
+    if(s.typeCursor<s.registrationTypes.size()) {
         registerStates(s,tickStart);
         return;
     }

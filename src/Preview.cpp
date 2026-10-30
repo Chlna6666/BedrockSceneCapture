@@ -34,6 +34,7 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <memory>
