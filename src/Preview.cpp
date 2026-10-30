@@ -251,7 +251,7 @@ void update(BaseActorRenderContext& ctx){
     auto* player=ctx.mClientInstance.getLocalPlayer();
     if(!player){reset();return;}
     auto& region=player->getDimensionBlockSource();
-    auto const service=ctx.mScreenContext.tessellator.mBufferResourceService;
+    auto const service=ctx.mScreenContext.tessellator.mBufferResourceService.get();
     if(service.expired()){reset();return;}
     if(player!=gPlayer || &region!=gRegion ||
        gBoundService.lock()!=service.lock()){
