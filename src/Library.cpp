@@ -215,6 +215,14 @@ bool usesBlockEntityRenderer(std::string const& name) {
 bool saveLibrary(LibraryData const& data, std::string& error) {
     try {
         std::filesystem::create_directories(data.directory / "meshes");
+        // Invalidate any manifest from an earlier run before rewriting the
+        // version-scoped indexes. If this export crashes or I/O fails,
+        // a stale manifest must not advertise old results as current.
+        {
+            std::error_code ec;
+            std::filesystem::remove(data.directory / "manifest.json",ec);
+            if(ec)throw std::system_error(ec,"cannot invalidate previous manifest");
+        }
         std::set<std::uint32_t> layers;
         std::set<std::string> writtenMeshes;
         std::set<std::string> staticModelHashes;
