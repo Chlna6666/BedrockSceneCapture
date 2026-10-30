@@ -28,6 +28,9 @@
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/chunk/ChunkSource.h"
+#include <Windows.h>
+#include <exception>
+#include <string>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -381,11 +384,18 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
     LevelRendererPlayer,&LevelRendererPlayer::$renderBlockEntities,
     void,BaseActorRenderContext& ctx,bool alpha) {
     origin(ctx,alpha);
-    if(!alpha) {
-        {std::lock_guard guard(gResourceMutex);
-         gResource=ctx.mScreenContext.tessellator.mBufferResourceService;}
-        update(ctx);
-    } else ::bsc::render(ctx);
+    try {
+        if(!alpha) {
+            {std::lock_guard guard(gResourceMutex);
+             gResource=ctx.mScreenContext.tessellator.mBufferResourceService;}
+            update(ctx);
+        }else ::bsc::render(ctx);
+    }catch(std::exception const& e){
+        OutputDebugStringA(("BSC preview disabled after render exception: "
+                            +std::string(e.what())+"\n").c_str());
+        gPreviewEnabled.store(false);
+        reset();
+    }
 }
 } // namespace
 std::weak_ptr<mce::BufferResourceService> renderBufferService(){

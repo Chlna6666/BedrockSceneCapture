@@ -389,6 +389,13 @@ bool sampleBlock(Session& s,Block const& block,BlockPos const& pos) {
     return true;
 }
 void advance(Session& s) {
+    // Renderer reload can invalidate BlockGraphics and atlas pointers during
+    // a multi-tick export. Abort before touching those pointers.
+    if(!BlockGraphics::mInitialized()){
+        log().warn("F8: native block graphics unloaded during export");
+        finish(true);
+        return;
+    }
     auto tickStart=Clock::now();
     if(s.typeCursor<s.registrationTypes.size()) {
         registerStates(s,tickStart);
@@ -481,6 +488,11 @@ void onTick(LocalPlayer& player) {
 }
 void onMenuUpdate(MinecraftGame& game){
     if(!gMod)return;
+    if(gSession && gSession->player){
+        // On leaving a world the local-player tick hook stops firing.
+        // Do not retain dead BlockSource/LocalPlayer pointers in that session.
+        finish(true);
+    }
     if(game.isPrimaryClientInstanceReady()){
         // gsl::not_null wraps a Bedrock::NonOwnerPointer. Its first ->
         // targets NonOwnerPointer itself, not IClientInstance.
