@@ -5,7 +5,7 @@ LeviLamina 26.51.9 client mod. F8 exports native block-state registry informatio
 ## Controls
 
 - F7: Loaded-region incremental chunk wireframe inspection, nearest-first, capped at 512 cached chunks and bounded per-chunk line count. Native tessellation and GPU upload are incremental.
-- F8: Enumerate registered BlockType permutations and static BlockGeometry::Model definitions; optionally sample live tessellation from loaded chunks for context-dependent geometry.
+- F8: Export all registered block-state permutations and static model definitions; at the main menu (when the optional MinecraftGame update hook works) this operates without any world, chunk loading or native tessellation. In-world captures can additionally sample live contextual meshes.
 - F9: Stop sampling; output is marked cancelled/incomplete.
 
 ## Output
@@ -28,7 +28,7 @@ Native terrain UVs belong to the game's dynamically assembled atlas and **must n
 
 Static model definitions already include face texture identifiers and texture maps; they do not require placement in the world to export. For static model definitions the offline renderer must reproduce the source's box/face transforms, UV rotation and texture-map resolution. The mapping of each BlockState to its static model definition has not yet been verified. Dynamic blocks (stairs, fences, water, lava and other neighbor-sensitive states) require offline neighbor rules; a finite set of mesh samples cannot guarantee every context. Block-entity models, actor animation, alpha blending and PBR material recipes still need dedicated capture.
 
-Registered state enumeration is complete *for the initialized registry*; mesh and material completeness is not claimed. Only air is classified complete. Pack fingerprints are not yet available. Live model sampling is rate-limited to approximately 3 ms and 2 tessellator calls per game tick, with asynchronous hash and disk I/O. F8 currently requires being in a world to use its LocalPlayer hotkey handler, although it does not require all states or static model definitions to be loaded into world chunks.
+Registered state enumeration is complete *for the initialized registry*; mesh and material completeness is not claimed. Only air is classified complete. Pack fingerprints are not yet available. Live model sampling is rate-limited to approximately 3 ms and 2 tessellator calls per game tick, with asynchronous hash and disk I/O. A main-menu capture has `definitions_only: true` in the manifest and no world samples. The model registry must already have initialized; its enumeration does not imply complete final world geometry. Menu update hooking is optional and in-world F8 remains available.
 
 ## Build and validation
 

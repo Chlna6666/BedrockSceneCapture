@@ -22,13 +22,15 @@ public:
         if(!installPreview()){
             uninstallCapture();mod.getLogger().error("Could not install render hook");return false;
         }
-        mod.getLogger().info("BSC enabled: F7 wireframe, F8 native registry model library, F9 cancel");
+        if(!installMenuCapture())
+            mod.getLogger().warn("Menu hook unavailable: in-world F8 remains usable");
+        mod.getLogger().info("BSC enabled: F7 wireframe, F8 registry/model export, F9 cancel");
         mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"export"/"1.26.51.1").string());
         return true;
     }
     bool disable(){
         mod.getLogger().info("BSC disabling: unhooking render and tick");
-        uninstallPreview();uninstallCapture();return true;
+        uninstallMenuCapture();uninstallPreview();uninstallCapture();return true;
     }
     bool unload(){return true;}
 };

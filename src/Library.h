@@ -54,6 +54,7 @@ struct LibraryData {
     std::uint32_t registered{}, visitedChunks{}, skippedChunks{};
     std::uint32_t sampledBlocks{}, failedSamples{};
     bool cancelled{};
+    bool definitionOnly{};
 };
 bool saveLibrary(LibraryData const&, std::string& error);
 std::string hexBytes(std::string const&);

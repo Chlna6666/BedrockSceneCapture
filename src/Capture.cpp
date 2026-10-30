@@ -6,6 +6,8 @@
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
 #include "mc/client/player/LocalPlayer.h"
+#include "mc/client/game/MinecraftGame.h"
+#include "mc/client/game/IClientInstance.h"
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
@@ -106,7 +108,7 @@ struct Session {
     std::unique_ptr<Tessellator> tess;
 };
 std::unique_ptr<Session> gSession;
-bool wasF7{},wasF8{},wasF9{};
+bool wasF7{},wasF8{},wasF9{},wasMenuF8{},wasMenuF9{};
 auto& log(){return gMod->getLogger();}
 bool gameFocused(){
     DWORD pid{};
@@ -130,24 +132,25 @@ void finish(bool cancelled) {
     log().info("F8 registry states={}, native samples={}, cancelled={}; writing {}",
                registered,sampled,cancelled,directory.string());
 }
-void begin(LocalPlayer& player) {
+void begin(LocalPlayer* player) {
     if(gSession) finish(true);
-    auto& region=player.getDimensionBlockSource();
-    auto& source=region.getChunkSource();
-    auto service=renderBufferService();
-    if(service.expired()) {
-        log().warn("F8 needs an initialized native renderer; enter a world and retry");
+    if(!BlockGraphics::mInitialized()){
+        log().warn("F8: client graphics resources are not initialized");
         return;
     }
     auto session=std::make_unique<Session>();
     session->library.directory=gMod->getDataDir()/"export"/"1.26.51.1";
-    session->player=&player;
-    session->region=&region;
-    session->minY=region.getMinHeight();
-    session->maxY=region.getMaxHeight();
-    if (session->minY>=session->maxY || session->maxY-session->minY>2048) {
-        log().error("Invalid world build height, F8 cancelled");
-        return;
+    session->library.definitionOnly=!player;
+    session->player=player;
+    if(player) {
+        auto& region=player->getDimensionBlockSource();
+        session->region=&region;
+        session->minY=region.getMinHeight();
+        session->maxY=region.getMaxHeight();
+        if(session->minY>=session->maxY || session->maxY-session->minY>2048){
+            log().error("Invalid world height");
+            return;
+        }
     }
     // Use every registered permutation, not just the states present in loaded chunks.
     auto const& types=BlockTypeRegistry::get().mBlockLookupMap.get();
@@ -165,20 +168,32 @@ void begin(LocalPlayer& player) {
         log().error("F8: no registered block permutations found");
         return;
     }
-    std::set<std::pair<int,int>> positions;
-    auto collect=[&](auto const& storage){
-        for(auto const& [pos,weak]:storage)
-            if(weak.lock()&&source.getAvailableChunk(pos))
-                positions.emplace(pos.x,pos.z);
-    };
-    if(auto* map=source.getChunkMap())collect(*map);
-    if(positions.empty())collect(source.getStorage());
-    for (auto const& [x,z]:positions)session->loadedChunks.emplace_back(x,z);
-    session->blockTess=std::make_unique<BlockTessellator>(&region);
-    session->blockTess->mCachedGetBlock.get()=[&region](BlockPos const& p)->Block const&{
-        return region.getBlock(p);
-    };
-    session->tess=std::make_unique<Tessellator>(std::move(service));
+    if(player){
+        auto& region=*session->region;
+        auto& source=region.getChunkSource();
+        std::set<std::pair<int,int>> positions;
+        auto collect=[&](auto const& storage){
+            for(auto const& [pos,weak]:storage)
+                if(weak.lock()&&source.getAvailableChunk(pos))
+                    positions.emplace(pos.x,pos.z);
+        };
+        if(auto* map=source.getChunkMap())collect(*map);
+        if(positions.empty())collect(source.getStorage());
+        for(auto const& [x,z]:positions)
+            session->loadedChunks.emplace_back(x,z);
+        auto service=renderBufferService();
+        if(!service.expired()){
+            session->blockTess=std::make_unique<BlockTessellator>(&region);
+            session->blockTess->mCachedGetBlock.get()=[&region](BlockPos const& pos)->Block const&{
+                return region.getBlock(pos);
+            };
+            session->tess=std::make_unique<Tessellator>(std::move(service));
+        }else{
+            session->loadedChunks.clear();
+            session->library.definitionOnly=true;
+            log().warn("F8: renderer buffer service missing; definitions only");
+        }
+    }
     gWriter.start();
     log().info("F8 model index: states={}, sample chunks={}, output={}",
                session->registrations.size(),session->loadedChunks.size(),
@@ -335,10 +350,17 @@ LL_TYPE_INSTANCE_HOOK(BSCTickHook,ll::memory::HookPriority::Normal,
     origin(tick);
     onTick(*this);
 }
+LL_TYPE_INSTANCE_HOOK(BSCMenuHook,ll::memory::HookPriority::Normal,
+    MinecraftGame,&MinecraftGame::$update,void) {
+    origin();
+    onMenuUpdate(*this);
+}
 } // namespace
 
 void initialize(ll::mod::NativeMod& mod){gMod=&mod;}
 bool installCapture(){return BSCTickHook::hook()==0;}
+bool installMenuCapture(){return BSCMenuHook::hook()==0;}
+void uninstallMenuCapture(){BSCMenuHook::unhook();}
 void uninstallCapture(){
     BSCTickHook::unhook();
     if(gSession)finish(true);
@@ -364,7 +386,7 @@ void onTick(LocalPlayer& player) {
     }
     try {
         if(cancel&&gSession){finish(true);return;}
-        if(start){log().info("F8 global model resource export requested");begin(player);return;}
+        if(start){log().info("F8 global model resource export requested");begin(&player);return;}
         if(!gSession)return;
         if(gSession->player!=&player ||
            gSession->region!=&player.getDimensionBlockSource()){
@@ -374,6 +396,27 @@ void onTick(LocalPlayer& player) {
     }catch(std::exception const& e){
         log().error("F8 resource enumeration failed: {}",e.what());
         finish(true);
+    }
+}
+void onMenuUpdate(MinecraftGame& game){
+    if(!gMod)return;
+    if(game.isPrimaryClientInstanceReady() &&
+       game.getPrimaryClientInstance()->getLocalPlayer()!=nullptr){
+        wasMenuF8=false;wasMenuF9=false;
+        return;
+    }
+    bool focus=gameFocused();
+    bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);
+    bool f9=focus&&(GetAsyncKeyState(VK_F9)&0x8000);
+    bool start=f8&&!wasMenuF8, cancel=f9&&!wasMenuF9;
+    wasMenuF8=f8;wasMenuF9=f9;
+    try{
+        if(cancel && gSession && gSession->player==nullptr){finish(true);return;}
+        if(start){log().info("F8: definition-only export from game menu");begin(nullptr);return;}
+        if(gSession && gSession->player==nullptr)advance(*gSession);
+    }catch(std::exception const& e){
+        log().error("F8 menu export failed: {}",e.what());
+        if(gSession && gSession->player==nullptr)finish(true);
     }
 }
 } // namespace bsc

@@ -443,6 +443,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"loaded_chunks_skipped\":" << data.skippedChunks
                  << ",\"sampled_blocks\":" << data.sampledBlocks
                  << ",\"failed_samples\":" << data.failedSamples + writeFailures
+                 << ",\"definitions_only\":" << (data.definitionOnly?"true":"false")
                  << ",\"cancelled\":" << (data.cancelled?"true":"false")
                  << ",\"complete\":false}\n";
         // Commit metadata last; an incomplete export is never advertised as complete.
