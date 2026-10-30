@@ -1,0 +1,9 @@
+{
+  "name": "${modName}",
+  "entry": "${modFile}",
+  "version": "${modVersion}",
+  "type": "native",
+  "platform": "${modPlatform}",
+  "description": "Capture loaded chunks, block states, mesh/UV and display original triangle wireframes. Bedrock 26.51.x.",
+  "author": "Chlna6666"
+}

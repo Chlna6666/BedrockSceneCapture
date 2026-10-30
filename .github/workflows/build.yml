@@ -1,0 +1,39 @@
+name: Bedrock 26.51.x client build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+      - uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/.xmake
+          key: bsc-26.51-${{ runner.os }}-${{ hashFiles('xmake.lua') }}
+          restore-keys: |
+            bsc-26.51-${{ runner.os }}-
+      - name: Update package repositories
+        run: xmake repo -u
+      - name: Configure
+        run: xmake f -a x64 -p windows -m release -y -v
+      - name: Compile
+        run: xmake -y -v
+      - name: Decode format self-test
+        run: python tools/inspect.py --self-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BedrockSceneCapture-26.51.x-windows-x64
+          if-no-files-found: error
+          path: |
+            bin/BedrockSceneCapture/
+            !bin/**/*.pdb
