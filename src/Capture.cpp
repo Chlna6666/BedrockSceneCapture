@@ -488,19 +488,19 @@ void onTick(LocalPlayer& player) {
 }
 void onMenuUpdate(MinecraftGame& game){
     if(!gMod)return;
-    if(gSession && gSession->player){
-        // On leaving a world the local-player tick hook stops firing.
-        // Do not retain dead BlockSource/LocalPlayer pointers in that session.
-        finish(true);
-    }
     if(game.isPrimaryClientInstanceReady()){
         // gsl::not_null wraps a Bedrock::NonOwnerPointer. Its first ->
         // targets NonOwnerPointer itself, not IClientInstance.
         auto* client=game.getPrimaryClientInstance().get().get();
         if(client && client->getLocalPlayer()){
             wasMenuF8=false;wasMenuF9=false;
-            return;
+            return; // preserve the in-world F8 session while player is alive
         }
+    }
+    if(gSession && gSession->player){
+        // Leaving the world stops LocalPlayer ticks. Release the old world
+        // session only after confirming that there is no active local player.
+        finish(true);
     }
     bool focus=gameFocused();
     bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);
