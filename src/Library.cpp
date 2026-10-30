@@ -331,6 +331,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ",\"native_render_layer\":" << block.renderLayer
                    << ",\"block_actor_type\":" << block.blockActorType
                    << ",\"native_block_shape\":" << block.nativeShape
+                   << ",\"geometry_context\":" << quoted(block.geometryContext)
                    << ",\"visual_bounds_mesh_generated\":"
                    << (block.visualBoundsAvailable?"true":"false")
                    << ",\"visual_bounds\":["

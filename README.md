@@ -16,7 +16,7 @@ BMCBL 的 `crates/bedrock-block-model` 已解析 `blocks.json`、`terrain_textur
 
 F8 输出目录：`BedrockSceneCapture/export/1.26.51.1/`。
 
-- `blocks.json`：每个 BlockState 的 `native_block_shape`、`visual_bounds`、`visual_bounds_mesh_generated`、`texture_bindings[].resource_alias`，以及 `variants[].mesh_refs`、逐三角形 `mesh_triangle_texture_slots`。
+- `blocks.json`：每个 BlockState 的 `native_block_shape`、`geometry_context`（例如 `stairs_corner_neighbors`、`fluid_neighbors`、`horizontal_connections`）、`visual_bounds`、`visual_bounds_mesh_generated`、`texture_bindings[].resource_alias`，以及 `variants[].mesh_refs`、逐三角形 `mesh_triangle_texture_slots`。
 - `meshes/<sha256>.json`：去重网格。`uv_space=block_face_local` 表示 UV 在方块面本地空间，绝对不能当作动态地形图集坐标；`face_index_per_triangle` 与 `face_order` 明确六面拼接顺序（上、下、北、南、西、东）。交叉平面只使用第一个纹理槽，正反面分别提供几何。
 - `geometry_catalog.json`：静态 BlockGeometry 定义；离线端还需要完成父模型、变换和条件可见性组合。
 - `coverage.json`、`manifest.json`：覆盖与局限；`registry_only=true`、`loaded_chunks_scanned=0`。

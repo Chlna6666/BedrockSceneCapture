@@ -51,6 +51,7 @@ struct BlockResource {
     int blockActorType{};
     bool air{};
     int nativeShape{-1};
+    std::string geometryContext{"none"};
     bool visualBoundsAvailable{};
     std::array<float,6> visualBounds{};
     std::vector<ModelSample> samples;

@@ -245,6 +245,27 @@ void registerStates(Session& s,Clock::time_point started) {
             }
             entry.textures=cached->second;
             entry.nativeShape=static_cast<int>(gfx->mBlockShape);
+            switch(gfx->mBlockShape){
+            case BlockShape::Water:
+            case BlockShape::BubbleColumn:
+                entry.geometryContext="fluid_neighbors";break;
+            case BlockShape::Stairs:
+                entry.geometryContext="stairs_corner_neighbors";break;
+            case BlockShape::Fence:
+            case BlockShape::FenceGate:
+            case BlockShape::Wall:
+            case BlockShape::MetalBars:
+            case BlockShape::DoubleSideFence:
+                entry.geometryContext="horizontal_connections";break;
+            case BlockShape::Rail:
+            case BlockShape::RedDust:
+            case BlockShape::Tripwire:
+                entry.geometryContext="neighbor_signals";break;
+            default:
+                if(entry.dynamic)entry.geometryContext="neighbor_dependent";break;
+            }
+            if(entry.blockEntity)entry.geometryContext="block_entity_nbt";
+            if(entry.geometryContext!="none")entry.dynamic=true;
             auto const& visual=gfx->mVisualShape.get();
             entry.visualBounds={visual.min.x,visual.min.y,visual.min.z,
                                 visual.max.x,visual.max.y,visual.max.z};
