@@ -96,6 +96,8 @@ struct Session {
     LibraryData library;
     LocalPlayer* player{};
     BlockSource* region{};
+    std::vector<BlockType const*> registrationTypes;
+    std::size_t typeCursor{};
     std::vector<Block const*> registrations;
     std::unordered_map<Block const*,std::size_t> lookup;
     std::size_t registerCursor{};
@@ -155,17 +157,13 @@ void begin(LocalPlayer* player) {
     }
     // Use every registered permutation, not just the states present in loaded chunks.
     auto const& types=BlockTypeRegistry::get().mBlockLookupMap.get();
-    for (auto const& [name,type] : types) {
-        if(!type)continue;
-        type->forEachBlockPermutation([&](Block const& block) -> bool {
-            session->registrations.emplace_back(&block);
-            return true;
-        });
-    }
+    // Expand registered permutations incrementally rather than blocking F8 startup.
+    for(auto const& [name,type]:types)
+        if(type)session->registrationTypes.emplace_back(type.get());
     for(auto const& [name,model]:BlockGraphics::mModels()){
         if(model)session->geometryModels.emplace_back(name,model.get());
     }
-    if(session->registrations.empty()){
+    if(session->registrationTypes.empty()){
         log().error("F8: no registered block permutations found");
         return;
     }
@@ -197,13 +195,24 @@ void begin(LocalPlayer* player) {
     }
     gWriter.start();
     log().info("F8 model index: states={}, sample chunks={}, output={}",
-               session->registrations.size(),session->loadedChunks.size(),
+               session->registrationTypes.size(),session->loadedChunks.size(),
                session->library.directory.string());
     gSession=std::move(session);
 }
 void registerStates(Session& s,Clock::time_point started) {
-    while (s.registerCursor<s.registrations.size() &&
-           Clock::now()-started<std::chrono::milliseconds(3)) {
+    while(Clock::now()-started<std::chrono::milliseconds(3)){
+        if(s.registerCursor>=s.registrations.size()){
+            s.registrations.clear();
+            s.registerCursor=0;
+            if(s.typeCursor>=s.registrationTypes.size())break;
+            if(auto const* type=s.registrationTypes[s.typeCursor++]){
+                type->forEachBlockPermutation([&](Block const& permutation)->bool{
+                    s.registrations.emplace_back(&permutation);
+                    return true;
+                });
+            }
+            if(s.registrations.empty())continue;
+        }
         auto const* block=s.registrations[s.registerCursor++];
         if(!block)continue;
         BlockResource entry;
@@ -334,7 +343,8 @@ bool sampleBlock(Session& s,Block const& block,BlockPos const& pos) {
 }
 void advance(Session& s) {
     auto tickStart=Clock::now();
-    if(s.registerCursor<s.registrations.size()) {
+    if(s.typeCursor<s.registrationTypes.size() ||
+       s.registerCursor<s.registrations.size()) {
         registerStates(s,tickStart);
         return;
     }

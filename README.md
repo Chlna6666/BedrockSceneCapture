@@ -43,3 +43,5 @@ Texture mappings are extracted directly from `TextureAtlasItem.mTextureUVs` rath
 Windows 的实际原生 C++ 编译必须在带有 LeviLamina 26.51.9 client SDK 和 MSVC 兼容工具链的 Windows Runner 上完成。若 GitHub Actions Job 在分配 Runner 之前失败（Runner ID 为 0、Steps 为空），属于 CI 调度/账户/Runner 层失败，而不是 C++ 编译诊断，不能据此宣称代码编译失败或成功。新增独立 Linux JSON 自测任务以区分工具链与数据格式故障；完整原生打包仍必须由 Windows 工作流验证。
 
 Dedicated block-actor renderer classification now uses the native `BlockActorType` enum instead of substring tests (which could previously misidentify `minecraft:bedrock` as a bed). States of chests, signs, beds, banners and related block actors are still flagged unsupported for complete offline display, but their **available base block geometry** can now be sampled without claiming their dedicated renderer was captured. The block-actor type ID is exported for offline dispatch.
+
+Registry states are expanded a block type at a time within the frame budget instead of all at F8 startup. A single native type callback may still take longer than the budget; disk serialization remains off-thread.
