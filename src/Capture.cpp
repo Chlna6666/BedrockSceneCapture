@@ -1,6 +1,7 @@
 #include "Capture.h"
 #include "Library.h"
 #include "MeshUtils.h"
+#include "StaticModels.h"
 #include "Preview.h"
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
@@ -8,6 +9,8 @@
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
+#include "mc/client/renderer/block/TextureItem.h"
+#include "mc/client/renderer/block/block_geometry/Model.h"
 #include "mc/client/renderer/texture/TextureUVCoordinateSet.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/BlockSource.h"
@@ -93,6 +96,8 @@ struct Session {
     std::vector<Block const*> registrations;
     std::unordered_map<Block const*,std::size_t> lookup;
     std::size_t registerCursor{};
+    std::vector<std::pair<std::string,BlockGeometry::Model const*>> geometryModels;
+    std::size_t geometryCursor{};
     std::vector<ChunkPos> loadedChunks;
     std::size_t nextChunk{};
     std::uint32_t cell{};
@@ -153,6 +158,9 @@ void begin(LocalPlayer& player) {
             return true;
         });
     }
+    for(auto const& [name,model]:BlockGraphics::mModels()){
+        if(model)session->geometryModels.emplace_back(name,model.get());
+    }
     if(session->registrations.empty()){
         log().error("F8: no registered block permutations found");
         return;
@@ -190,10 +198,25 @@ void registerStates(Session& s,Clock::time_point started) {
         entry.air=block->isAir();
         entry.dynamic=requiresNeighbors(entry.name);
         entry.blockEntity=usesBlockEntityRenderer(entry.name);
-        if (!entry.air && !entry.blockEntity) {
-            if (auto* graphics=BlockGraphics::getForBlock(*block)) {
-                auto const& uv=graphics->getTexture(0,0);
-                entry.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
+        if(auto* gfx=BlockGraphics::getForBlock(*block)){
+            auto const& items=gfx->mTextureItems.get();
+            entry.textures.reserve(items.size());
+            for(std::size_t slot=0;slot<items.size();++slot){
+                TextureBinding tex;
+                tex.slot=static_cast<std::uint32_t>(slot);
+                tex.defaultName=items[slot].defaultName.get();
+                tex.carriedName=items[slot].carriedName.get();
+                tex.atlasItem=items[slot].defaultItem.get().mName.get();
+                auto const& uv=gfx->getTexture(slot,static_cast<int>(block->getData()));
+                tex.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
+                tex.sourcePath=uv.sourceFileLocation.mPath.get().value;
+                tex.tileWidth=uv._texSizeW.get();
+                tex.tileHeight=uv._texSizeH.get();
+                tex.sourceWidth=uv._sourceImageWidth.get();
+                tex.sourceHeight=uv._sourceImageHeight.get();
+                tex.pbrHandle=uv.mPBRTextureDataHandle.get();
+                if(slot==0)entry.atlasUv=tex.atlasUv;
+                entry.textures.emplace_back(std::move(tex));
             }
         }
         auto index=s.library.blocks.size();
@@ -201,6 +224,14 @@ void registerStates(Session& s,Clock::time_point started) {
         s.library.blocks.emplace_back(std::move(entry));
     }
     s.library.registered=static_cast<std::uint32_t>(s.library.blocks.size());
+}
+void registerNativeGeometry(Session& s,Clock::time_point start) {
+    while(s.geometryCursor<s.geometryModels.size() &&
+          Clock::now()-start<std::chrono::milliseconds(3)) {
+        auto const& [name,model]=s.geometryModels[s.geometryCursor++];
+        if(!model)continue;
+        s.library.staticModels.emplace_back(StaticModel{name,serializeStaticGeometry(name,*model)});
+    }
 }
 std::string neighborhood(BlockSource& region, BlockPos const& p) {
     // 3x3x3 context is a SAMPLE signature, not an offline neighbor rule.
@@ -241,6 +272,10 @@ void advance(Session& s) {
     auto tickStart=Clock::now();
     if(s.registerCursor<s.registrations.size()) {
         registerStates(s,tickStart);
+        return;
+    }
+    if(s.geometryCursor<s.geometryModels.size()){
+        registerNativeGeometry(s,tickStart);
         return;
     }
     unsigned tessellated=0;
