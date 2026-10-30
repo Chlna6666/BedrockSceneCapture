@@ -36,3 +36,36 @@ pwsh -NoProfile -File tools/build_client.ps1
 ```
 
 或直接运行 `xmake f -p windows -a x64 -m release -y` 与 `xmake -y -v`。CI 执行 Windows x64 模组编译、打包校验，及 Linux 模型索引格式自测。构建通过不代表已完成实际游戏中的 F7/F8 功能验证。
+
+## Remote desktop / F8 input fallback
+
+The normal F7/F8/F9 hotkeys are polled only when the Minecraft window is the foreground process.
+RDP, remote-control software, virtual keyboards and Fn-key interception can make them unreliable.
+
+For a reliable input-independent option, find the full **BSC remote control directory**
+in the LeviLamina log (`<mod data dir>/control/`). While the game is running,
+create an **empty marker file** in that directory:
+
+| File | Action |
+|---|---|
+| `status.flag` | Log game/menu hook activity, focus, key detection and capture state |
+| `start.flag` | Start F8 registry export / in-world native observation |
+| `save.flag` | Save an active world observation (waits for registry enumeration to finish) |
+| `cancel.flag` | Cancel an active capture |
+| `preview.flag` | Toggle F7 wireframe visualization in world |
+
+Example PowerShell, executed on the **remote Windows machine** (replace the path with
+the exact directory printed in the mod log):
+
+```powershell
+$control = 'C:\<BSC-data-directory>\control'
+New-Item -ItemType File -Path (Join-Path $control 'status.flag') -Force
+New-Item -ItemType File -Path (Join-Path $control 'start.flag') -Force
+# Explore loaded stairs, fences, walls, fluids and BlockActor models.
+New-Item -ItemType File -Path (Join-Path $control 'save.flag') -Force
+```
+
+Command files are removed when consumed and polled at most once per 150 ms on the
+game update thread; they are not scripts, contain no commands and require no
+keyboard foreground focus. The `status.flag` log distinguishes failed key
+forwarding from a missing game tick/menu hook.

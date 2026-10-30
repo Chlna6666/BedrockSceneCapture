@@ -1,6 +1,8 @@
 #include "Capture.h"
 #include "Preview.h"
 #include "NativeObservations.h"
+#include <filesystem>
+#include <system_error>
 #include "ll/api/mod/NativeMod.h"
 #include "ll/api/mod/RegisterHelper.h"
 namespace bsc {
@@ -27,7 +29,13 @@ public:
             mod.getLogger().warn("Menu hook unavailable: in-world F8 remains usable");
         if(!installNativeObservations())
             mod.getLogger().warn("Native BlockTessellator hook unavailable: registry-only export remains usable");
+        auto const controls=mod.getDataDir()/"control";
+        std::error_code controlError;
+        std::filesystem::create_directories(controls,controlError);
+        if(controlError)
+            mod.getLogger().warn("BSC control directory unavailable: {}: {}",controls.string(),controlError.message());
         mod.getLogger().info("BSC enabled: F7 wireframe, F8 registry/model export, F9 cancel");
+        mod.getLogger().info("BSC remote control directory: {}",controls.string());
         mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"export"/"1.26.51.1").string());
         return true;
     }

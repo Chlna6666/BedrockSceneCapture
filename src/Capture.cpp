@@ -30,6 +30,7 @@
 #include <Windows.h>
 #include <algorithm>
 #include <chrono>
+#include <string_view>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
@@ -116,6 +117,7 @@ struct Session {
     std::size_t typeCursor{},permutationCursor{};
     std::unordered_map<std::uint32_t,std::size_t> idToIndex;
     bool monitoringReported{};
+    bool saveRequested{};
     std::map<std::tuple<int,std::array<float,6>,std::uint32_t>,std::shared_ptr<Mesh const>> registryBoxCache;
     std::unordered_map<BlockGraphics const*,std::shared_ptr<std::vector<TextureBinding> const>> textureCache;
     std::vector<std::string> geometryModels;
@@ -128,6 +130,46 @@ bool gameFocused(){
     DWORD pid{};
     GetWindowThreadProcessId(GetForegroundWindow(),&pid);
     return pid==GetCurrentProcessId();
+}
+
+enum class ControlCommand { None, Start, Save, Cancel, Status, Preview };
+/// External one-shot triggers for RDP, Moonlight, RustDesk and any host that
+/// intercepts function keys. Flags contain no executable text.
+ControlCommand pollControlCommand(){
+    static auto lastCheck=Clock::time_point{};
+    auto const now=Clock::now();
+    if(now-lastCheck<std::chrono::milliseconds(150))
+        return ControlCommand::None;
+    lastCheck=now;
+    auto const root=gMod->getDataDir()/"control";
+    // One command per poll. Priority is deliberate: cancel always beats save.
+    constexpr std::array<std::pair<std::string_view,ControlCommand>,5> commands{{
+        {"cancel.flag",ControlCommand::Cancel},
+        {"save.flag",ControlCommand::Save},
+        {"start.flag",ControlCommand::Start},
+        {"status.flag",ControlCommand::Status},
+        {"preview.flag",ControlCommand::Preview}
+    }};
+    for(auto const& [name,kind]:commands){
+        std::error_code error;
+        auto const path=root/std::filesystem::path(name);
+        if(!std::filesystem::is_regular_file(path,error))continue;
+        if(error)continue;
+        if(!std::filesystem::remove(path,error)){
+            if(error)log().warn("BSC control command cannot be consumed: {}: {}",path.string(),error.message());
+            continue;
+        }
+        return kind;
+    }
+    return ControlCommand::None;
+}
+void reportControlStatus(std::string_view mode){
+    log().info("BSC status: mode={}, game_focused={}, F8_key_down={}, graphics_ready={}, F8_active={}, "
+               "export={}, control={}",
+               mode,gameFocused(),(GetAsyncKeyState(VK_F8)&0x8000)!=0,
+               BlockGraphics::mInitialized(),gSession!=nullptr,
+               (gMod->getDataDir()/"export"/"1.26.51.1").string(),
+               (gMod->getDataDir()/"control").string());
 }
 void collectNativeSamples(Session& s) {
     for(auto& event:takeNativeObservations()){
@@ -403,6 +445,7 @@ void advance(Session& s) {
         return;
     }
     if(s.player){
+        if(s.saveRequested){finish(false);return;}
         // Capture only native tessellation observed by Minecraft's renderer.
         // No synthetic BlockSource or chunk sweep is involved.
         collectNativeSamples(s);
@@ -438,35 +481,53 @@ void onTick(LocalPlayer& player) {
     static bool tickReported=false;
     if(!tickReported){
         tickReported=true;
-        log().info("BSC local-player tick hook active; game focus required for F7/F8/F9");
+        log().info("BSC local-player tick hook active; F7/F8/F9 need game focus. "
+                   "Remote fallback: create start.flag/save.flag/cancel.flag/status.flag under {}",
+                   (gMod->getDataDir()/"control").string());
     }
+    auto const command=pollControlCommand();
     bool focus=gameFocused();
     bool f7=focus&&(GetAsyncKeyState(VK_F7)&0x8000);
     bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);
     bool f9=focus&&(GetAsyncKeyState(VK_F9)&0x8000);
-    bool toggle=f7&&!wasF7,start=f8&&!wasF8,cancel=f9&&!wasF9;
+    bool toggle=(f7&&!wasF7)||command==ControlCommand::Preview;
+    bool start=(f8&&!wasF8)||command==ControlCommand::Start;
+    bool save=command==ControlCommand::Save;
+    bool cancel=(f9&&!wasF9)||command==ControlCommand::Cancel;
     wasF7=f7;wasF8=f8;wasF9=f9;
-    if(toggle) {
+    if(toggle){
         bool on=!gPreviewEnabled.load();
         gPreviewEnabled.store(on);
         log().info("F7 triangle and vertex debug view {}",on?"on":"off");
     }
-    try {
-        if(cancel&&gSession){finish(true);return;}
-        if(start){
+    try{
+        if(command==ControlCommand::Status)reportControlStatus("world");
+        if(cancel){
+            if(gSession)finish(true);
+            else log().info("BSC cancel requested, no active F8 capture");
+            return;
+        }
+        if(start||save){
             if(gSession && gSession->player==&player){
-                log().info("F8 native scene capture stopped; committing snapshot");
-                finish(false);
-            }else{
-                log().info("F8 registry export and native scene capture started");
+                if(gSession->typeCursor<gSession->registrationTypes.size() ||
+                   gSession->geometryCursor<gSession->geometryModels.size()){
+                    gSession->saveRequested=true;
+                    log().info("F8: save requested; finishing full registry enumeration before writing");
+                }else{
+                    log().info("F8: native scene observation finished, committing captured models");
+                    finish(false);
+                }
+            }else if(start){
+                log().info("F8: registry and native-scene model capture started ({})",
+                           command==ControlCommand::Start?"external control":"hotkey");
                 begin(&player);
+            }else{
+                log().warn("BSC save requested without an active F8 capture");
             }
             return;
         }
         if(!gSession)return;
-        if(gSession->player!=&player){
-            finish(true);return;
-        }
+        if(gSession->player!=&player){finish(true);return;}
         advance(*gSession);
     }catch(std::exception const& e){
         log().error("F8 resource enumeration failed: {}",e.what());
@@ -476,31 +537,48 @@ void onTick(LocalPlayer& player) {
 void onMenuUpdate(MinecraftGame& game){
     if(!gMod)return;
     if(game.isPrimaryClientInstanceReady()){
-        // gsl::not_null wraps a Bedrock::NonOwnerPointer. Its first ->
-        // targets NonOwnerPointer itself, not IClientInstance.
+        // gsl::not_null wraps a Bedrock::NonOwnerPointer.
         auto* client=game.getPrimaryClientInstance().get().get();
         if(client && client->getLocalPlayer()){
             wasMenuF8=false;wasMenuF9=false;
-            return; // preserve the in-world F8 session while player is alive
+            return; // World controls are polled from LocalPlayer tick.
         }
     }
-    if(gSession && gSession->player){
-        // Leaving the world stops LocalPlayer ticks. Release the old world
-        // session only after confirming that there is no active local player.
-        finish(true);
-    }
+    if(gSession && gSession->player)
+        finish(true); // World closed.
+    auto const command=pollControlCommand();
     bool focus=gameFocused();
     bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);
     bool f9=focus&&(GetAsyncKeyState(VK_F9)&0x8000);
-    bool start=f8&&!wasMenuF8, cancel=f9&&!wasMenuF9;
+    bool start=(f8&&!wasMenuF8)||command==ControlCommand::Start;
+    bool save=command==ControlCommand::Save;
+    bool cancel=(f9&&!wasMenuF9)||command==ControlCommand::Cancel;
     wasMenuF8=f8;wasMenuF9=f9;
     try{
-        if(cancel && gSession && gSession->player==nullptr){finish(true);return;}
-        if(start){log().info("F8: definition-only export from game menu");begin(nullptr);return;}
-        if(gSession && gSession->player==nullptr)advance(*gSession);
+        if(command==ControlCommand::Status)reportControlStatus("menu");
+        if(command==ControlCommand::Preview)
+            log().warn("BSC preview requires a loaded world");
+        if(cancel){
+            if(gSession && !gSession->player)finish(true);
+            return;
+        }
+        if(start){
+            log().info("F8: definition-only export from menu ({})",
+                       command==ControlCommand::Start?"external control":"hotkey");
+            begin(nullptr);
+            return;
+        }
+        if(save){
+            if(gSession && !gSession->player){
+                log().info("F8 menu export save requested; finish current registry scan first");
+                gSession->saveRequested=true;
+            }else log().warn("BSC save requested without an active menu export");
+        }
+        if(gSession && !gSession->player)advance(*gSession);
     }catch(std::exception const& e){
         log().error("F8 menu export failed: {}",e.what());
-        if(gSession && gSession->player==nullptr)finish(true);
+        if(gSession && !gSession->player)finish(true);
     }
 }
+
 } // namespace bsc
