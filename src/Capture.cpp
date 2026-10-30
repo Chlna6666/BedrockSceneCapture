@@ -20,6 +20,7 @@
 #include "mc/world/level/Tick.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockType.h"
+#include "mc/world/level/block/actor/BlockActorType.h"
 #include "mc/world/level/block/registry/BlockTypeRegistry.h"
 #include "mc/world/level/chunk/ChunkSource.h"
 #include "mc/world/level/chunk/LevelChunk.h"
@@ -212,7 +213,31 @@ void registerStates(Session& s,Clock::time_point started) {
         entry.legacyData=block->getData();
         entry.air=block->isAir();
         entry.dynamic=requiresNeighbors(entry.name);
-        entry.blockEntity=usesBlockEntityRenderer(entry.name);
+        auto kind=block->getBlockType().mBlockEntityType;
+        entry.blockActorType=static_cast<int>(kind);
+        // A block actor does not automatically mean the entire visible block
+        // is rendered by a special renderer (e.g. furnaces still have a
+        // standard block mesh). Only model-owning types need extra capture.
+        switch(kind){
+        case BlockActorType::Chest:
+        case BlockActorType::EnderChest:
+        case BlockActorType::Sign:
+        case BlockActorType::HangingSign:
+        case BlockActorType::Skull:
+        case BlockActorType::Bed:
+        case BlockActorType::Banner:
+        case BlockActorType::ShulkerBox:
+        case BlockActorType::Conduit:
+        case BlockActorType::Bell:
+        case BlockActorType::DecoratedPot:
+        case BlockActorType::ItemFrame:
+        case BlockActorType::GlowItemFrame:
+            entry.blockEntity=true;
+            break;
+        default:
+            entry.blockEntity=false;
+            break;
+        }
         if(auto* gfx=BlockGraphics::getForBlock(*block)){
             entry.renderLayer=static_cast<int>(gfx->mRenderLayer);
             auto const& items=gfx->mTextureItems.get();
@@ -290,7 +315,7 @@ bool sampleBlock(Session& s,Block const& block,BlockPos const& pos) {
     auto it=s.lookup.find(&block);
     if(it==s.lookup.end())return false;
     auto& entry=s.library.blocks[it->second];
-    if(entry.air || entry.blockEntity)return false;
+    if(entry.air)return false; // capture any native base geometry even for dedicated renderers
     constexpr std::size_t MaxDynamicContexts=8;
     if(entry.samples.size()>=(entry.dynamic?MaxDynamicContexts:1u))return false;
     auto context=entry.dynamic?neighborhood(*s.region,pos):std::string{"live_reference"};

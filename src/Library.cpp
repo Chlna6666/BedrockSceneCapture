@@ -223,6 +223,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::ostringstream blocks, coverage;
         blocks << "{\"schema\":1,\"key_encoding\":\"native_block_state_nbt_le_hex\","
                   "\"uv_space\":\"game_terrain_atlas\",\"blocks\":[";
+        blocks.imbue(std::locale::classic());
+        blocks << std::setprecision(std::numeric_limits<float>::max_digits10);
         coverage << "{\"schema\":1,\"states\":[";
         bool firstBlock = true, firstCoverage = true;
         std::uint64_t samples = 0, meshRefs = 0, writeFailures = 0;
@@ -247,7 +249,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 stateStatus="complete"; reason="air requires no geometry";
             } else if (block.blockEntity) {
                 stateStatus="unsupported";
-                reason="dedicated block-entity renderer is not hooked; no fabricated geometry";
+                reason="dedicated block-entity renderer not hooked; optional base block mesh may be sampled but is not a complete model";
             } else if (block.dynamic) {
                 stateStatus="dynamic";
                 reason="neighbor-dependent geometry; samples do not constitute a complete offline rule";
@@ -266,6 +268,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ",\"legacy_data\":" << block.legacyData
                    << ",\"status\":" << quoted(stateStatus)
                    << ",\"native_render_layer\":" << block.renderLayer
+                   << ",\"block_actor_type\":" << block.blockActorType
                    << ",\"atlas_uv\":[" << block.atlasUv[0] << ',' << block.atlasUv[1]
                    << ',' << block.atlasUv[2] << ',' << block.atlasUv[3] << ']'
                    << ",\"texture_bindings\":[";

@@ -43,6 +43,7 @@ struct BlockResource {
     bool dynamic{};
     int renderLayer{-1};
     bool blockEntity{};
+    int blockActorType{};
     bool air{};
     std::vector<ModelSample> samples;
     std::vector<TextureBinding> textures;
