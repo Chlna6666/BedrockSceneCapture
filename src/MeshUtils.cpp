@@ -26,6 +26,7 @@ void captureMesh(BlockSource& region,BlockTessellator& blocks,Tessellator& tess,
         mesh.vertices.reserve(points.size());
         auto const& normals=raw.mNormals.get();
         auto const& uv=raw.mTextureUVs[0].get();
+        mesh.uvValid=(uv.size()==points.size());
         auto const& colors=raw.mColors.get();
         for(std::size_t i=0;i<points.size();++i){
             Vertex v;

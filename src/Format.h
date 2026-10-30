@@ -8,6 +8,7 @@ struct Vertex {
 };
 struct Mesh {
     std::uint32_t cell{}, layer{}, primitive{};
+    bool uvValid{true};
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
 };

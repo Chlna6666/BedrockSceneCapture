@@ -123,6 +123,13 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
     constexpr float epsilon=0.00003f;
     std::uint64_t unresolved=0;
     for(std::size_t i=0;i<triangles.size();i+=3){
+        if(!mesh.uvValid){
+            if(i){slots<<',';variants<<',';}
+            slots<<"null";
+            variants<<"null";
+            ++unresolved;
+            continue;
+        }
         if(i){slots<<',';variants<<',';}
         TextureBinding const* selected=nullptr;
         TextureUVVariant const* selectedVariant=nullptr;
@@ -143,9 +150,13 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
                 if(!selected){
                     selected=&texture;
                     selectedVariant=&candidate;
-                }else if(texture.slot!=selected->slot ||
-                         candidate.sourcePath!=selectedVariant->sourcePath ||
-                         candidate.atlasUv!=selectedVariant->atlasUv){
+                }else if(candidate.sourcePath!=selectedVariant->sourcePath ||
+                         candidate.atlasUv!=selectedVariant->atlasUv ||
+                         candidate.pbrHandle!=selectedVariant->pbrHandle ||
+                         texture.additive!=selected->additive){
+                    // Different slots can be perfectly equivalent aliases
+                    // for the same native atlas rectangle and material.
+                    // Only conflicting texture identities are ambiguous.
                     ambiguous=true;
                 }
             }
@@ -168,7 +179,8 @@ std::string meshJson(Mesh const& mesh) {
     std::ostringstream s;
     s.imbue(std::locale::classic());
     s << std::setprecision(std::numeric_limits<float>::max_digits10);
-    s << "{\"schema\":1,\"topology\":\"triangles\",\"material\":\"terrain/layer_"
+    s << "{\"schema\":1,\"topology\":\"triangles\",\"uv_complete\":"
+      << (mesh.uvValid?"true":"false") << ",\"material\":\"terrain/layer_"
       << mesh.layer << "\",\"vertices\":[";
     for (std::size_t i=0;i<mesh.vertices.size();++i) {
         if (i) s << ',';

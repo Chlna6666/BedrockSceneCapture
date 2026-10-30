@@ -36,6 +36,16 @@ def validate(root: Path):
             variants=texture.get("atlas_variants",[])
             keys={(uv["variant"],uv["frame"]) for uv in variants}
             if len(keys)!=len(variants):errors.append("duplicate atlas variant/frame")
+            for uv_group in (variants,texture.get("carried_atlas_variants",[])):
+                for uv in uv_group:
+                    rect=uv.get("atlas_uv")
+                    if not isinstance(rect,list) or len(rect)!=4 or any(
+                        not isinstance(n,(int,float)) or not math.isfinite(n) for n in rect
+                    ):
+                        errors.append("non-finite or invalid atlas UV rectangle")
+            carried=texture.get("carried_atlas_variants",[])
+            if len({(uv["variant"],uv["frame"]) for uv in carried})!=len(carried):
+                errors.append("duplicate carried atlas variant/frame")
             if variants and not texture.get("resource_alias") and not texture.get("atlas_item"):
                 errors.append("unresolvable texture identifier")
         for v in b.get("variants",[]):
@@ -58,6 +68,8 @@ def validate(root: Path):
                     errors.append(f"unreadable referenced mesh {digest}: {exc}")
                     continue
                 if mesh.get("topology")!="triangles":errors.append("mesh topology")
+                if mesh.get("uv_complete") not in (True,False,None):
+                    errors.append("invalid UV validity marker")
                 vertices=mesh.get("vertices",[])
                 indices=mesh.get("indices",[])
                 if len(indices)%3:errors.append("index triangle alignment")
@@ -68,6 +80,8 @@ def validate(root: Path):
                     tri_slots=face_slots[pos]
                     if len(tri_slots)!=len(indices)//3:errors.append("triangle binding count")
                     if any(x is not None and x not in slots for x in tri_slots):errors.append("invalid texture slot")
+                    if mesh.get("uv_complete") is False and any(x is not None for x in tri_slots):
+                        errors.append("UV-incomplete mesh cannot declare resolved texture slots")
                     if pos<len(variant_slots):
                         indices_for_mesh=variant_slots[pos]
                         if len(indices_for_mesh)!=len(tri_slots):
