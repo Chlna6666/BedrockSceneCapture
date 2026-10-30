@@ -44,7 +44,17 @@ jobs:
       - name: Configure
         run: xmake f -a x64 -p windows -m release -y -v
       - name: Compile
-        run: xmake -y -v
+        shell: pwsh
+        run: |
+          & xmake -y -v -D *>&1 | Tee-Object -FilePath build-client.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload compiler diagnostics on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: BedrockSceneCapture-build-diagnostics
+          if-no-files-found: ignore
+          path: build-client.log
       - name: Verify packaged client manifest and DLL
         run: python tools/verify_package.py
       - name: Validate model library schema self-test
