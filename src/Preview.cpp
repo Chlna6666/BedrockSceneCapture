@@ -54,6 +54,8 @@ namespace {
 using Clock=std::chrono::steady_clock;
 using Key=std::pair<int,int>;
 constexpr std::size_t MaxLinesPerChunk=60000;
+// GPU resident line-segment budget; buffers contain two vertices per line.
+constexpr std::size_t MaxResidentGpuSegments=1500000;
 constexpr std::size_t MaxVertexMarksPerChunk=2000;
 constexpr unsigned MaxChunkMeshes=512;
 constexpr unsigned RefreshFrames=120;
@@ -66,6 +68,7 @@ struct ChunkWire {
     bool queued{}, building{},ready{},truncated{};
     std::vector<std::array<Vec3,2>> lines;
     std::unique_ptr<mce::Mesh> gpu;
+    std::size_t gpuSegments{};
 };
 std::mutex gResourceMutex;
 std::weak_ptr<mce::BufferResourceService> gResource;
@@ -223,6 +226,11 @@ void refreshLoaded(BlockSource& region,BlockPos const& center){
             it->second.minY=region.getMinHeight();
             it->second.maxY=region.getMaxHeight();
             enqueue(key);
+        } else if(!it->second.ready && !it->second.queued && !it->second.building) {
+            // Rebuild an evicted GPU mesh when the player comes near it again.
+            long long dx=static_cast<long long>(key.first)-floorChunk(center.x);
+            long long dz=static_cast<long long>(key.second)-floorChunk(center.z);
+            if(dx*dx+dz*dz<64)enqueue(key);
         } else if(it->second.ready && gFrame-it->second.builtFrame>RebuildFrames) {
             auto dx=key.first-floorChunk(center.x);
             auto dz=key.second-floorChunk(center.z);
@@ -307,6 +315,7 @@ void update(BaseActorRenderContext& ctx){
         chunk.ready=true;
         chunk.builtFrame=gFrame;
         chunk.gpu.reset();
+        chunk.gpuSegments=0;
         gActive.reset();
     }
 }
@@ -338,6 +347,11 @@ bool visible(BaseActorRenderContext& ctx,ChunkWire const& chunk,Vec3 const& came
     return std::abs(glm::dot(delta,right))<=width &&
            std::abs(glm::dot(delta,up))<=vertical;
 }
+double chunkCameraDistanceSq(ChunkWire const& chunk,Vec3 const& camera){
+    double const dx=static_cast<double>(chunk.x)*16.0+8.0-camera.x;
+    double const dz=static_cast<double>(chunk.z)*16.0+8.0-camera.z;
+    return dx*dx+dz*dz;
+}
 void render(BaseActorRenderContext& ctx){
     if(!gPreviewEnabled.load())return;
     auto* level=ctx.mClientInstance.getLevelRenderer();
@@ -353,32 +367,82 @@ void render(BaseActorRenderContext& ctx){
     shader.dirty=true;
     using Capture=decltype(dragon::RenderMetadata::mOffscreenCaptureDescription);
     static Capture empty{};
-    bool uploaded=false;
-    for(auto& [key,chunk]:gChunks){
-        if(!chunk.ready || !visible(ctx,chunk,camera))continue;
-        if(!chunk.gpu && !chunk.lines.empty() && !uploaded){
-            if(chunk.lines.size()>static_cast<std::size_t>(std::numeric_limits<int>::max()/2))
-                continue;
-            t.begin(Tessellator::DebugContextCallback{},mce::PrimitiveMode::LineList,
-                    static_cast<int>(chunk.lines.size()*2),false);
-            t.color(1.f,1.f,1.f,1.f);
-            for(auto const& ends:chunk.lines)
-                for(auto const& point:ends){t.tex2({0.5f,0.5f});t.vertex(point.x,point.y,point.z);}
-            chunk.gpu=std::make_unique<mce::Mesh>(t.end(Tessellator::UploadMode::Buffered,
-                "BSC_ChunkWire",SupplementaryFieldAutoGenerationMode{0}));
-            chunk.lines.clear();
-            uploaded=true;
+    auto restoreShader=[&](){
+        shader.color=previous;
+        shader.dirty=true;
+    };
+    try {
+        // Ordered map iteration has no relation to camera distance.
+        // Upload the closest visible, not-yet-buffered chunk first.
+        ChunkWire* candidate=nullptr;
+        double candidateDistance=std::numeric_limits<double>::infinity();
+        std::size_t residentSegments=0;
+        for(auto& [key,chunk]:gChunks){
+            if(chunk.gpu)residentSegments+=chunk.gpuSegments;
+            if(!chunk.ready || chunk.gpu || chunk.lines.empty() ||
+               !visible(ctx,chunk,camera))continue;
+            double const distance=chunkCameraDistanceSq(chunk,camera);
+            if(distance<candidateDistance){
+                candidate=&chunk;
+                candidateDistance=distance;
+            }
         }
-        if(!chunk.gpu||!chunk.gpu->isValid())continue;
-        auto stack=ctx.mScreenContext.camera.worldMatrixStack.get().push(false);
-        stack.mat->translate(static_cast<float>(chunk.x*16)-camera.x,
-                             static_cast<float>(chunk.minY)-camera.y,
-                             static_cast<float>(chunk.z*16)-camera.z);
-        chunk.gpu->renderMesh(ctx.mScreenContext,material,texture,0,
-            chunk.gpu->mVertexCount.get().value_or(0u),empty.get(),nullptr);
+        if(candidate){
+            auto const requested=candidate->lines.size();
+            // Evict only buffers farther from the camera than the incoming
+            // candidate. This prevents oscillation around the budget.
+            while(residentSegments+requested>MaxResidentGpuSegments){
+                ChunkWire* victim=nullptr;
+                double farthest=candidateDistance;
+                for(auto& [key,chunk]:gChunks){
+                    if(!chunk.gpu || !chunk.gpuSegments)continue;
+                    double const d=chunkCameraDistanceSq(chunk,camera);
+                    if(d>farthest){farthest=d;victim=&chunk;}
+                }
+                if(!victim)break;
+                residentSegments-=victim->gpuSegments;
+                victim->gpu.reset();
+                victim->gpuSegments=0;
+                victim->ready=false;
+            }
+            if(residentSegments+requested<=MaxResidentGpuSegments &&
+               requested<=static_cast<std::size_t>(std::numeric_limits<int>::max()/2)){
+                t.begin(Tessellator::DebugContextCallback{},mce::PrimitiveMode::LineList,
+                        static_cast<int>(requested*2),false);
+                t.color(1.f,1.f,1.f,1.f);
+                for(auto const& ends:candidate->lines)
+                    for(auto const& point:ends){
+                        t.tex2({0.5f,0.5f});
+                        t.vertex(point.x,point.y,point.z);
+                    }
+                candidate->gpu=std::make_unique<mce::Mesh>(
+                    t.end(Tessellator::UploadMode::Buffered,
+                          "BSC_ChunkWire",SupplementaryFieldAutoGenerationMode{0}));
+                candidate->gpuSegments=requested;
+            }else{
+                // Leave it eligible for near-camera rebuild rather than
+                // retaining a huge CPU geometry array indefinitely.
+                candidate->ready=false;
+            }
+            // vector.clear() alone leaves up to 60k segments of heap capacity
+            // in every chunk even when those lines are on the GPU.
+            std::vector<std::array<Vec3,2>>{}.swap(candidate->lines);
+        }
+        for(auto& [key,chunk]:gChunks){
+            if(!chunk.ready || !chunk.gpu || !chunk.gpu->isValid() ||
+               !visible(ctx,chunk,camera))continue;
+            auto stack=ctx.mScreenContext.camera.worldMatrixStack.get().push(false);
+            stack.mat->translate(static_cast<float>(chunk.x*16)-camera.x,
+                                 static_cast<float>(chunk.minY)-camera.y,
+                                 static_cast<float>(chunk.z*16)-camera.z);
+            chunk.gpu->renderMesh(ctx.mScreenContext,material,texture,0,
+                chunk.gpu->mVertexCount.get().value_or(0u),empty.get(),nullptr);
+        }
+    }catch(...){
+        restoreShader();
+        throw;
     }
-    shader.color=previous;
-    shader.dirty=true;
+    restoreShader();
 }
 LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
     LevelRendererPlayer,&LevelRendererPlayer::$renderBlockEntities,
