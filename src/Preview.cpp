@@ -26,6 +26,7 @@
 #include "mc/deps/renderer/ShaderColor.h"
 #include "mc/deps/renderer/Camera.h"
 #include "mc/world/level/BlockSource.h"
+#include "mc/world/level/block/Block.h"
 #include "mc/world/level/chunk/ChunkSource.h"
 #include <array>
 #include <limits>
@@ -195,10 +196,10 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
     origin(ctx,alpha);
     if(!alpha){
         {std::lock_guard guard(gResourceMutex);
-         gResource=ctx.mScreenContext.tessellator.mBufferResourceService.get();}
+         gResource=ctx.mScreenContext.tessellator.mBufferResourceService;}
         update(ctx);
     }
-    else { render(ctx); }
+    else { ::bsc::render(ctx); }
 }
 }
 std::weak_ptr<mce::BufferResourceService> renderBufferService(){
