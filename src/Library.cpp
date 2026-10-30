@@ -76,40 +76,77 @@ void atomicFile(std::filesystem::path const& path, std::string const& data) {
         throw;
     }
 }
-std::string meshJson(Mesh const& mesh) {
-    std::vector<std::uint32_t> source = mesh.indices;
-    if (source.empty()) {
+std::vector<std::uint32_t> triangulate(Mesh const& mesh) {
+    std::vector<std::uint32_t> source=mesh.indices;
+    if(source.empty()){
         source.resize(mesh.vertices.size());
-        std::iota(source.begin(), source.end(), 0u);
+        std::iota(source.begin(),source.end(),0u);
     }
     std::vector<std::uint32_t> triangles;
-    auto tri = [&](std::uint32_t a, std::uint32_t b, std::uint32_t c) {
-        if (a >= mesh.vertices.size() || b >= mesh.vertices.size() || c >= mesh.vertices.size())
+    auto tri=[&](std::uint32_t a,std::uint32_t b,std::uint32_t c){
+        if(a>=mesh.vertices.size()||b>=mesh.vertices.size()||c>=mesh.vertices.size())
             throw std::runtime_error("native mesh has invalid index");
-        triangles.insert(triangles.end(), {a,b,c});
+        triangles.insert(triangles.end(),{a,b,c});
     };
-    switch (mesh.primitive) {
-    case 1: // mce::PrimitiveMode::QuadList
-        if (source.size() % 4) throw std::runtime_error("incomplete native quad");
-        for (std::size_t i=0; i<source.size(); i+=4) {
+    switch(mesh.primitive){
+    case 1:
+        if(source.size()%4)throw std::runtime_error("incomplete native quad");
+        for(std::size_t i=0;i<source.size();i+=4){
             tri(source[i],source[i+1],source[i+2]);
             tri(source[i],source[i+2],source[i+3]);
         }
         break;
-    case 2: // TriangleList
-        if (source.size() % 3) throw std::runtime_error("incomplete native triangle");
-        for (std::size_t i=0; i<source.size(); i+=3)
+    case 2:
+        if(source.size()%3)throw std::runtime_error("incomplete native triangle");
+        for(std::size_t i=0;i<source.size();i+=3)
             tri(source[i],source[i+1],source[i+2]);
         break;
-    case 3: // TriangleStrip
-        for (std::size_t i=2; i<source.size(); ++i) {
-            if (i & 1) tri(source[i-1],source[i-2],source[i]);
+    case 3:
+        for(std::size_t i=2;i<source.size();++i)
+            if(i&1)tri(source[i-1],source[i-2],source[i]);
             else tri(source[i-2],source[i-1],source[i]);
-        }
         break;
-    default:
-        throw std::runtime_error("unsupported native primitive topology");
+    default: throw std::runtime_error("unsupported primitive topology");
     }
+    return triangles;
+}
+std::string faceBindingJson(Mesh const& mesh,BlockResource const& block,
+                            std::uint64_t& unresolved) {
+    auto triangles=triangulate(mesh);
+    std::ostringstream o;
+    o << '[';
+    constexpr float epsilon=0.00003f;
+    for(std::size_t i=0;i<triangles.size();i+=3){
+        if(i)o<<',';
+        TextureBinding const* match=nullptr;
+        bool ambiguous=false;
+        for(auto const& binding:block.textures){
+            auto const& rect=binding.atlasUv;
+            float const loU=std::min(rect[0],rect[2])-epsilon;
+            float const hiU=std::max(rect[0],rect[2])+epsilon;
+            float const loV=std::min(rect[1],rect[3])-epsilon;
+            float const hiV=std::max(rect[1],rect[3])+epsilon;
+            bool inside=true;
+            for(std::size_t j=0;j<3;++j){
+                auto const& v=mesh.vertices[triangles[i+j]];
+                if(v.u<loU||v.u>hiU||v.v<loV||v.v>hiV){inside=false;break;}
+            }
+            if(!inside)continue;
+            if(!match){match=&binding;continue;}
+            if(match->defaultName!=binding.defaultName ||
+               match->sourcePath!=binding.sourcePath ||
+               match->atlasUv!=binding.atlasUv)ambiguous=true;
+        }
+        if(!match||ambiguous){
+            ++unresolved;
+            o<<"null";
+        }else o<<match->slot;
+    }
+    o << ']';
+    return o.str();
+}
+std::string meshJson(Mesh const& mesh) {
+    auto triangles=triangulate(mesh);
     std::ostringstream s;
     s.imbue(std::locale::classic());
     s << std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -162,6 +199,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::filesystem::create_directories(data.directory / "meshes");
         std::set<std::uint32_t> layers;
         std::set<std::string> writtenMeshes;
+        std::set<std::string> staticModelHashes;
+        std::map<std::string,std::string> staticModelIndex;
         std::map<std::string, std::uint32_t> statuses;
         std::ostringstream blocks, coverage;
         blocks << "{\"schema\":1,\"key_encoding\":\"native_block_state_nbt_le_hex\","
@@ -169,6 +208,17 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         coverage << "{\"schema\":1,\"states\":[";
         bool firstBlock = true, firstCoverage = true;
         std::uint64_t samples = 0, meshRefs = 0, writeFailures = 0;
+        std::uint64_t unmatchedFaces=0;
+        for(auto const& model:data.staticModels){
+            try{
+                auto hash=sha256(model.geometryJson);
+                if(staticModelHashes.insert(hash).second)
+                    atomicFile(data.directory/"meshes"/(hash+".json"),model.geometryJson);
+                staticModelIndex.emplace(model.name,hash);
+            }catch(std::exception const&){
+                ++writeFailures;
+            }
+        }
         for (auto const& block : data.blocks) {
             std::string stateStatus;
             std::string reason;
@@ -196,7 +246,23 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ",\"status\":" << quoted(stateStatus)
                    << ",\"atlas_uv\":[" << block.atlasUv[0] << ',' << block.atlasUv[1]
                    << ',' << block.atlasUv[2] << ',' << block.atlasUv[3] << ']'
-                   << ",\"variants\":[";
+                   << ",\"texture_bindings\":[";
+            bool firstTexture=true;
+            for(auto const& tex:block.textures){
+                if(!firstTexture)blocks<<',';
+                firstTexture=false;
+                blocks << "{\"slot\":" << tex.slot
+                       << ",\"resource_alias\":" << quoted(tex.defaultName)
+                       << ",\"carried_alias\":" << quoted(tex.carriedName)
+                       << ",\"atlas_item\":" << quoted(tex.atlasItem)
+                       << ",\"source_path\":" << quoted(tex.sourcePath)
+                       << ",\"atlas_uv\":[" << tex.atlasUv[0] << ',' << tex.atlasUv[1]
+                       << ',' << tex.atlasUv[2] << ',' << tex.atlasUv[3] << ']'
+                       << ",\"tile_size\":[" << tex.tileWidth << ',' << tex.tileHeight << ']'
+                       << ",\"source_size\":[" << tex.sourceWidth << ',' << tex.sourceHeight << ']'
+                       << ",\"pbr_handle\":" << tex.pbrHandle << '}';
+            }
+            blocks << "],\"variants\":[";
             bool firstVariant=true;
             for (auto const& sample : block.samples) {
                 ++samples;
@@ -205,6 +271,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 blocks << "{\"neighborhood\":" << quoted(sample.neighborhood)
                        << ",\"mesh_refs\":[";
                 bool firstMesh=true;
+                std::vector<std::string> perMeshTextureSlots;
+                std::uint64_t localUnmatched=0;
                 for (auto const& mesh : sample.meshes) {
                     try {
                         auto content = meshJson(mesh);
@@ -215,12 +283,20 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                         if (!firstMesh) blocks << ',';
                         firstMesh=false;
                         blocks << quoted(hash);
+                        perMeshTextureSlots.push_back(faceBindingJson(mesh,block,localUnmatched));
                         ++meshRefs;
                     } catch (std::exception const&) {
                         ++writeFailures;
                     }
                 }
-                blocks << "],\"missing_meshes\":" << sample.missing << '}';
+                blocks << "],\"mesh_triangle_texture_slots\":[";
+                for(std::size_t i=0;i<perMeshTextureSlots.size();++i){
+                    if(i)blocks<<',';
+                    blocks<<perMeshTextureSlots[i];
+                }
+                unmatchedFaces+=localUnmatched;
+                blocks << "],\"unresolved_texture_triangles\":" << localUnmatched
+                       << ",\"missing_meshes\":" << sample.missing << '}';
             }
             blocks << "]}";
             if (stateStatus!="complete") {
@@ -244,6 +320,17 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     "\"No block entity geometry or NBT renderer\","
                     "\"No entity skeletons or animation clips\","
                     "\"No verified local texture mapping or resource pack fingerprint\"]}\n";
+        std::ostringstream modelIndex;
+        modelIndex << "{\"schema\":1,\"source\":\"native_block_geometry_registry\","
+                      "\"associations_verified\":false,\"models\":[";
+        bool firstModel=true;
+        for(auto const& [name,hash]:staticModelIndex){
+            if(!firstModel)modelIndex<<',';
+            firstModel=false;
+            modelIndex << "{\"name\":" << quoted(name)
+                       << ",\"mesh_ref\":" << quoted(hash) << '}';
+        }
+        modelIndex << "]}\n";
         std::ostringstream materials;
         materials << "{\"schema\":1,\"texture_source\":\"local_game_installation\","
                      "\"texture_payload_exported\":false,\"materials\":[";
@@ -258,7 +345,14 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                          "\"texture_resolution\":\"external\","
                          "\"blend_mode\":\"unresolved\"}";
         }
-        materials << "]}\n";
+        materials << "],\"atlas_binding\":{"
+                        "\"coordinate_space\":\"runtime_atlas_uv\","
+                        "\"asset_resolver\":\"local_resource_pack_terrain_texture_json\","
+                        "\"face_texture_slot_mapping\":\"blocks.variants.mesh_triangle_texture_slots\","
+                        "\"slot_assets\":\"blocks.texture_bindings\","
+                        "\"require_exact_atlas_layout\":false,"
+                        "\"remap_via_original_slot_uv_rect\":true,"
+                        "\"unresolved_face_policy\":\"report_not_fallback\"}}\n";
         std::ostringstream entities;
         entities << "{\"schema\":1,\"geometry\":[],\"skeletons\":[],\"animations\":[],"
                     "\"status\":\"unsupported\","
@@ -272,6 +366,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     "\"textures_exported\":false,"
                     "\"native_meshes_unique\":" << writtenMeshes.size()
                  << ",\"native_mesh_refs\":" << meshRefs
+                 << ",\"static_geometry_models\":" << staticModelIndex.size()
+                 << ",\"unresolved_texture_triangles\":" << unmatchedFaces
                  << ",\"sample_contexts\":" << samples
                  << ",\"registered_block_states\":" << data.registered
                  << ",\"loaded_chunks_scanned\":" << data.visitedChunks
@@ -282,6 +378,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"complete\":false}\n";
         // Commit metadata last; an incomplete export is never advertised as complete.
         atomicFile(data.directory/"blocks.json",blocks.str());
+        atomicFile(data.directory/"geometry_catalog.json",modelIndex.str());
         atomicFile(data.directory/"entities.json",entities.str());
         atomicFile(data.directory/"materials.json",materials.str());
         atomicFile(data.directory/"coverage.json",coverage.str());
