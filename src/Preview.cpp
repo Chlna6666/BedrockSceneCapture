@@ -301,9 +301,9 @@ bool visible(BaseActorRenderContext& ctx,ChunkWire const& chunk,Vec3 const& came
     glm::vec3 const delta{cx,cy,cz};
     float const height=static_cast<float>(chunk.maxY-chunk.minY)*0.5f;
     float const radius=std::sqrt(8.0f*8.0f+height*height+8.0f*8.0f);
-    auto const forward=cam.mForward;
-    auto const right=cam.mRight;
-    auto const up=cam.mUp;
+    auto const forward=cam.mForward.get();
+    auto const right=cam.mRight.get();
+    auto const up=cam.mUp.get();
     float const depth=glm::dot(delta,forward);
     float const farClip=cam.mZFar;
     // Fall back to drawing if the camera basis has not been initialized.

@@ -56,8 +56,8 @@ std::string serializeStaticGeometry(std::string const& name,BlockGeometry::Model
     for(auto const& element:model.mElements.get()){
         if(!first)o<<',';
         first=false;
-        auto const& pivot=element.mPivot;
-        auto const& rotation=element.mRotation;
+        auto const& pivot=element.mPivot.get();
+        auto const& rotation=element.mRotation.get();
         o << "{\"name\":" << jsonString(element.mName.get())
           << ",\"parent\":" << jsonString(element.mParent.get())
           << ",\"pivot\":[" << pivot.x << ',' << pivot.y << ',' << pivot.z << ']'
@@ -67,8 +67,8 @@ std::string serializeStaticGeometry(std::string const& name,BlockGeometry::Model
         for(auto const& box:element.mBoxes.get()){
             if(!firstBox)o<<',';
             firstBox=false;
-            auto const& origin=box.mOrigin;
-            auto const& size=box.mSize;
+            auto const& origin=box.mOrigin.get();
+            auto const& size=box.mSize.get();
             o << "{\"origin\":[" << origin.x << ',' << origin.y << ',' << origin.z << ']'
               << ",\"size\":[" << size.x << ',' << size.y << ',' << size.z << ']'
               << ",\"faces\":[";
