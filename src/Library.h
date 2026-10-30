@@ -10,7 +10,7 @@
 namespace bsc {
 struct ModelSample {
     std::string neighborhood;
-    std::vector<Mesh> meshes;
+    std::vector<std::shared_ptr<Mesh const>> meshes;
     std::uint32_t missing{};
 };
 struct TextureUVVariant {
@@ -50,6 +50,9 @@ struct BlockResource {
     bool blockEntity{};
     int blockActorType{};
     bool air{};
+    int nativeShape{-1};
+    bool visualBoundsAvailable{};
+    std::array<float,6> visualBounds{};
     std::vector<ModelSample> samples;
     std::shared_ptr<std::vector<TextureBinding> const> textures;
     std::vector<TextureBinding> const& textureBindings() const {
