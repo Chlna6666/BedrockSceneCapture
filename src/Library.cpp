@@ -130,6 +130,20 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
     variants << '[';
     constexpr float epsilon=0.00003f;
     std::uint64_t unresolved=0;
+    if(mesh.registryVisualBounds){
+        // Vertex UV is face-local, not an atlas coordinate; BMCBL resolves
+        // the named textures using the resource-pack definitions.
+        for(std::size_t i=0;i<mesh.faceSlots.size();++i){
+            if(i){slots<<',';variants<<',';}
+            auto slot=mesh.faceSlots[i];
+            if(slot<block.textureBindings().size()) slots<<slot;
+            else {slots<<"null";++unresolved;}
+            variants<<"null";
+        }
+        slots<<']';
+        variants<<']';
+        return {slots.str(),variants.str(),unresolved};
+    }
     for(std::size_t i=0;i<triangles.size();i+=3){
         if(!mesh.uvValid){
             if(i){slots<<',';variants<<',';}
@@ -188,7 +202,12 @@ std::string meshJson(Mesh const& mesh) {
     s.imbue(std::locale::classic());
     s << std::setprecision(std::numeric_limits<float>::max_digits10);
     s << "{\"schema\":1,\"topology\":\"triangles\",\"uv_complete\":"
-      << (mesh.uvValid?"true":"false") << ",\"material\":\"terrain/layer_"
+      << (mesh.uvValid?"true":"false")
+      << ",\"geometry_source\":\""
+      << (mesh.registryVisualBounds?"registry_visual_bounds":"native_world_tessellation")
+      << "\",\"uv_space\":\""
+      << (mesh.registryVisualBounds?"block_face_local":"runtime_terrain_atlas")
+      << "\",\"material\":\"terrain/layer_"
       << mesh.layer << "\",\"vertices\":[";
     for (std::size_t i=0;i<mesh.vertices.size();++i) {
         if (i) s << ',';
@@ -284,8 +303,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             } else {
                 stateStatus="partial";
                 reason=block.samples.empty()
-                    ? "registered state has no captured native mesh"
-                    : "live native mesh samples captured; neighbor-invariance not verified";
+                    ? "non-box native shape requires geometry rules or engine tessellation"
+                    : "native visual bounds triangulated; scene-specific tessellation not verified";
             }
             ++statuses[stateStatus];
             if (!firstBlock) blocks << ',';
@@ -297,7 +316,11 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ",\"status\":" << quoted(stateStatus)
                    << ",\"native_render_layer\":" << block.renderLayer
                    << ",\"block_actor_type\":" << block.blockActorType
-                   << ",\"atlas_uv\":[" << block.atlasUv[0] << ',' << block.atlasUv[1]
+                   << ",\"native_block_shape\":" << block.nativeShape
+                   << ",\"visual_bounds\":["
+                   << block.visualBounds[0] << ',' << block.visualBounds[1] << ',' << block.visualBounds[2]
+                   << ',' << block.visualBounds[3] << ',' << block.visualBounds[4] << ',' << block.visualBounds[5]
+                   << "],\"atlas_uv\":[" << block.atlasUv[0] << ',' << block.atlasUv[1]
                    << ',' << block.atlasUv[2] << ',' << block.atlasUv[3] << ']'
                    << ",\"texture_bindings\":[";
             bool firstTexture=true;
@@ -350,8 +373,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 std::vector<std::string> perMeshTextureSlots;
                 std::vector<std::string> perMeshTextureVariants;
                 std::uint64_t localUnmatched=0;
-                for (auto const& mesh : sample.meshes) {
+                for (auto const& meshRef : sample.meshes) {
                     try {
+                        if(!meshRef)continue;
+                        Mesh const& mesh=*meshRef;
                         auto content = meshJson(mesh);
                         auto hash = sha256(content);
                         auto bindings=faceBindingJson(mesh,block);
@@ -491,7 +516,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"loaded_chunks_skipped\":" << data.skippedChunks
                  << ",\"sampled_blocks\":" << data.sampledBlocks
                  << ",\"failed_samples\":" << data.failedSamples + writeFailures
-                 << ",\"definitions_only\":" << (data.definitionOnly?"true":"false")
+                 << ",\"registry_only\":true,\"definitions_only\":" << (data.definitionOnly?"true":"false")
                  << ",\"cancelled\":" << (data.cancelled?"true":"false")
                  << ",\"complete\":false}\n";
         // Commit metadata last; an incomplete export is never advertised as complete.
