@@ -2,6 +2,7 @@
 #include "Library.h"
 #include "MeshUtils.h"
 #include "RegistryGeometry.h"
+#include "NativeObservations.h"
 #include "StaticModels.h"
 #include "Preview.h"
 #include "ll/api/memory/Hook.h"
@@ -113,6 +114,8 @@ struct Session {
     LocalPlayer* player{};
     std::vector<BlockType const*> registrationTypes;
     std::size_t typeCursor{},permutationCursor{};
+    std::unordered_map<std::uint32_t,std::size_t> idToIndex;
+    bool monitoringReported{};
     std::map<std::tuple<int,std::array<float,6>,std::uint32_t>,std::shared_ptr<Mesh const>> registryBoxCache;
     std::unordered_map<BlockGraphics const*,std::shared_ptr<std::vector<TextureBinding> const>> textureCache;
     std::vector<std::string> geometryModels;
@@ -126,8 +129,26 @@ bool gameFocused(){
     GetWindowThreadProcessId(GetForegroundWindow(),&pid);
     return pid==GetCurrentProcessId();
 }
+void collectNativeSamples(Session& s) {
+    for(auto& event:takeNativeObservations()){
+        auto it=s.idToIndex.find(event.stateIds[0]);
+        if(it==s.idToIndex.end())continue;
+        auto& block=s.library.blocks[it->second];
+        ModelSample sample;
+        sample.neighborhood="native_scene";
+        sample.nativeObserved=true;
+        sample.neighborStateIds=event.stateIds;
+        sample.meshes.emplace_back(std::make_shared<Mesh const>(std::move(event.mesh)));
+        block.samples.emplace_back(std::move(sample));
+        ++s.library.sampledBlocks;
+    }
+    for(auto& actor:takeActorModels())
+        s.library.actorModels.emplace_back(StaticModel{std::move(actor.name),std::move(actor.geometryJson)});
+}
 void finish(bool cancelled) {
     if(!gSession)return;
+    armNativeObservations(false);
+    collectNativeSamples(*gSession);
     gSession->library.cancelled=cancelled;
     auto directory=gSession->library.directory;
     auto registered=gSession->library.registered;
@@ -143,6 +164,7 @@ void finish(bool cancelled) {
 }
 void begin(LocalPlayer* player) {
     if(gSession) finish(true);
+    clearNativeObservations();
     if(!BlockGraphics::mInitialized()){
         log().warn("F8: client graphics resources are not initialized");
         return;
@@ -173,6 +195,7 @@ void begin(LocalPlayer* player) {
     log().info("F8 registry-only model capture: block types={}, no chunk I/O, output={}",
                session->registrationTypes.size(),session->library.directory.string());
     gSession=std::move(session);
+    armNativeObservations(player!=nullptr);
 }
 void registerStates(Session& s,Clock::time_point started) {
     while(Clock::now()-started<std::chrono::milliseconds(3)){
@@ -294,6 +317,8 @@ void registerStates(Session& s,Clock::time_point started) {
                 ++s.library.sampledBlocks;
             }
         }
+        auto const index=s.library.blocks.size();
+        s.idToIndex.emplace(entry.networkId,index);
         s.library.blocks.emplace_back(std::move(entry));
     }
     s.library.registered=static_cast<std::uint32_t>(s.library.blocks.size());
@@ -328,9 +353,15 @@ void advance(Session& s) {
         registerNativeGeometry(s,tickStart);
         return;
     }
-    // All registered states and native static models are captured. No
-    // ChunkSource reads or world-driven mesh sampling are required.
-    finish(false);
+    if(s.player){
+        // Capture only native tessellation observed by Minecraft's renderer.
+        // No synthetic BlockSource or chunk sweep is involved.
+        collectNativeSamples(s);
+        if(!s.monitoringReported){
+            s.monitoringReported=true;
+            log().info("F8: registered states ready; visit dynamic blocks, press F8 again to save, F9 to cancel");
+        }
+    }else finish(false);
 }
 LL_TYPE_INSTANCE_HOOK(BSCTickHook,ll::memory::HookPriority::Normal,
     LocalPlayer,&LocalPlayer::$tickWorld,void,::Tick const& tick) {
@@ -373,7 +404,16 @@ void onTick(LocalPlayer& player) {
     }
     try {
         if(cancel&&gSession){finish(true);return;}
-        if(start){log().info("F8 global model resource export requested");begin(&player);return;}
+        if(start){
+            if(gSession && gSession->player==&player){
+                log().info("F8 native scene capture stopped; committing snapshot");
+                finish(false);
+            }else{
+                log().info("F8 registry export and native scene capture started");
+                begin(&player);
+            }
+            return;
+        }
         if(!gSession)return;
         if(gSession->player!=&player){
             finish(true);return;

@@ -12,6 +12,8 @@ struct ModelSample {
     std::string neighborhood;
     std::vector<std::shared_ptr<Mesh const>> meshes;
     std::uint32_t missing{};
+    bool nativeObserved{};
+    std::array<std::uint32_t,7> neighborStateIds{};
 };
 struct TextureUVVariant {
     std::uint32_t variant{},frame{};
@@ -65,6 +67,7 @@ struct LibraryData {
     std::filesystem::path directory;
     std::vector<BlockResource> blocks;
     std::vector<StaticModel> staticModels;
+    std::vector<StaticModel> actorModels;
     std::uint32_t registered{}, visitedChunks{}, skippedChunks{};
     std::uint32_t sampledBlocks{}, failedSamples{};
     bool cancelled{};
