@@ -89,6 +89,12 @@ def validate(root: Path):
                         for slot,variant in zip(tri_slots,indices_for_mesh):
                             if slot is None and variant is not None:
                                 errors.append("unresolved face must have null variant")
+                            if slot is not None and mesh.get("uv_space")=="block_face_local":
+                                if variant is not None:
+                                    errors.append("face-local texture must not use runtime atlas variant")
+                                if mesh.get("geometry_source")!="registry_visual_bounds":
+                                    errors.append("unrecognized face-local geometry provenance")
+                                continue
                             if slot is not None:
                                 if not isinstance(variant,list) or len(variant)!=2:
                                     errors.append("missing variant for resolved face")
@@ -148,6 +154,40 @@ def self_test():
         for name,obj in examples.items():
             (p/name).write_text(json.dumps(obj),encoding="utf-8")
         assert validate(p)["valid"]
+        # Face-local registry mesh uses the native slot index and leaves
+        # runtime atlas variants unset. BMCBL resolves texture aliases.
+        local_mesh={
+            "topology":"triangles","uv_complete":True,
+            "geometry_source":"registry_visual_bounds","uv_space":"block_face_local",
+            "vertices":[
+                [0,0,0,0,0,-1,0,0,4294967295],
+                [0,1,0,0,0,-1,0,1,4294967295],
+                [1,1,0,0,0,-1,1,1,4294967295],
+            ],
+            "indices":[0,1,2]
+        }
+        local_raw=(json.dumps(local_mesh,separators=(",",":"))+"\\n").encode()
+        local_hash=hashlib.sha256(local_raw).hexdigest()
+        (p/"meshes"/(local_hash+".json")).write_bytes(local_raw)
+        state=examples["blocks.json"]["blocks"][0]
+        state["texture_bindings"]=[{"slot":2,"resource_alias":"stone"}]
+        variant=state["variants"][0]
+        variant["mesh_refs"]=[local_hash]
+        variant["mesh_triangle_texture_slots"]=[[2]]
+        variant["mesh_triangle_texture_variant_indices"]=[[None]]
+        examples["manifest.json"]["native_mesh_refs"]=1
+        for name in ("blocks.json","manifest.json"):
+            (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
+        assert validate(p)["valid"],"face-local slot must be resolvable without atlas"
+        variant["mesh_triangle_texture_variant_indices"]=[[[0,0]]]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        assert "face-local texture must not use runtime atlas variant" in validate(p)["errors"]
+        # Restore the original small fixture for corruption tests.
+        state["texture_bindings"]=[]
+        variant["mesh_refs"]=[digest]
+        variant["mesh_triangle_texture_slots"]=[[]]
+        variant["mesh_triangle_texture_variant_indices"]=[[]]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
         (p/"meshes"/(digest+".json")).write_bytes(mesh+b" ")
         assert not validate(p)["valid"],"hash corruption not detected"
         # A reference must never be interpreted as a filesystem path, even
