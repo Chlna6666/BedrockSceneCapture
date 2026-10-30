@@ -42,6 +42,7 @@
 namespace bsc {
 namespace {
 using Clock=std::chrono::steady_clock;
+ll::mod::NativeMod* gMod{};
 class Writer {
     std::mutex mutex;
     std::condition_variable cv;
@@ -59,10 +60,16 @@ class Writer {
                 jobs.pop_front();
             }
             std::string error;
-            if (!saveLibrary(task,error))
-                OutputDebugStringA(("BSC model library export failed: "+error+"\n").c_str());
-            else
-                OutputDebugStringA(("BSC model library written: "+task.directory.string()+"\n").c_str());
+            bool const saved=saveLibrary(task,error);
+            if(gMod){
+                if(!saved)
+                    gMod->getLogger().error("F8 model library write failed: {}",error);
+                else
+                    gMod->getLogger().info(
+                        "F8 model library saved: states={}, models={}, samples={}, directory={}",
+                        task.registered,task.staticModels.size(),task.sampledBlocks,
+                        task.directory.string());
+            }
         }
     }
 public:
@@ -89,7 +96,6 @@ public:
         jobs.clear();
     }
 };
-ll::mod::NativeMod* gMod{};
 Writer gWriter;
 
 struct Session {

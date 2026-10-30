@@ -47,3 +47,5 @@ Dedicated block-actor renderer classification now uses the native `BlockActorTyp
 Registry states are expanded a block type at a time within the frame budget instead of all at F8 startup. A single native type callback may still take longer than the budget; disk serialization remains off-thread.
 
 SDK type safety: main-menu F8 unwraps `gsl::not_null<Bedrock::NonOwnerPointer<IClientInstance>>` before querying the local player. The static model catalog retains `texture_stack` and ordered `face_index`. Render-class identifiers follow the native `BlockRenderLayer` enum; alpha/PBR shader-state details remain explicitly unverified.
+
+F7 now supports `TriangleStrip` wireframe geometry, avoids redundant QuadList diagonals and uses floor division for negative block-to-chunk coordinates. F8 shares immutable native atlas-variant snapshots between permutations, accesses registered static models under the engine's model mutex during resource-pack reloads, and reports asynchronous write completion to LeviLamina's regular logger.
