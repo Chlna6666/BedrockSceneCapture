@@ -210,11 +210,11 @@ void registerStates(Session& s,Clock::time_point started) {
                 auto const& uv=gfx->getTexture(slot,static_cast<int>(block->getData()));
                 tex.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
                 tex.sourcePath=uv.sourceFileLocation.mPath.get().value;
-                tex.tileWidth=uv._texSizeW.get();
-                tex.tileHeight=uv._texSizeH.get();
-                tex.sourceWidth=uv._sourceImageWidth.get();
-                tex.sourceHeight=uv._sourceImageHeight.get();
-                tex.pbrHandle=uv.mPBRTextureDataHandle.get();
+                tex.tileWidth=uv._texSizeW;
+                tex.tileHeight=uv._texSizeH;
+                tex.sourceWidth=uv._sourceImageWidth;
+                tex.sourceHeight=uv._sourceImageHeight;
+                tex.pbrHandle=uv.mPBRTextureDataHandle;
                 if(slot==0)entry.atlasUv=tex.atlasUv;
                 entry.textures.emplace_back(std::move(tex));
             }

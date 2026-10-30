@@ -56,8 +56,8 @@ std::string serializeStaticGeometry(std::string const& name,BlockGeometry::Model
     for(auto const& element:model.mElements.get()){
         if(!first)o<<',';
         first=false;
-        auto const& pivot=element.mPivot.get();
-        auto const& rotation=element.mRotation.get();
+        auto const& pivot=element.mPivot;
+        auto const& rotation=element.mRotation;
         o << "{\"name\":" << jsonString(element.mName.get())
           << ",\"parent\":" << jsonString(element.mParent.get())
           << ",\"pivot\":[" << pivot.x << ',' << pivot.y << ',' << pivot.z << ']'
@@ -67,8 +67,8 @@ std::string serializeStaticGeometry(std::string const& name,BlockGeometry::Model
         for(auto const& box:element.mBoxes.get()){
             if(!firstBox)o<<',';
             firstBox=false;
-            auto const& origin=box.mOrigin.get();
-            auto const& size=box.mSize.get();
+            auto const& origin=box.mOrigin;
+            auto const& size=box.mSize;
             o << "{\"origin\":[" << origin.x << ',' << origin.y << ',' << origin.z << ']'
               << ",\"size\":[" << size.x << ',' << size.y << ',' << size.z << ']'
               << ",\"faces\":[";
@@ -76,12 +76,12 @@ std::string serializeStaticGeometry(std::string const& name,BlockGeometry::Model
             for(auto const& face:box.mFaces.get()){
                 if(!firstFace)o<<',';
                 firstFace=false;
-                o << "{\"enabled\":" << (face.enabled.get()?"true":"false")
-                  << ",\"uv\":[" << face.u0.get() << ',' << face.v0.get()
-                  << ',' << face.u1.get() << ',' << face.v1.get() << ']'
-                  << ",\"rotation\":" << face.rotation.get()
+                o << "{\"enabled\":" << (face.enabled?"true":"false")
+                  << ",\"uv\":[" << face.u0 << ',' << face.v0
+                  << ',' << face.u1 << ',' << face.v1 << ']'
+                  << ",\"rotation\":" << face.rotation
                   << ",\"texture\":" << jsonString(face.texture.get())
-                  << ",\"texture_index\":" << face.textureIndex.get() << '}';
+                  << ",\"texture_index\":" << face.textureIndex << '}';
             }
             o << "]}";
         }

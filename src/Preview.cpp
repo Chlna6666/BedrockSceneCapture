@@ -302,19 +302,19 @@ bool visible(BaseActorRenderContext& ctx,ChunkWire const& chunk,Vec3 const& came
     glm::vec3 const delta{cx,cy,cz};
     float const height=static_cast<float>(chunk.maxY-chunk.minY)*0.5f;
     float const radius=std::sqrt(8.0f*8.0f+height*height+8.0f*8.0f);
-    auto const forward=cam.mForward.get();
-    auto const right=cam.mRight.get();
-    auto const up=cam.mUp.get();
+    auto const forward=cam.mForward;
+    auto const right=cam.mRight;
+    auto const up=cam.mUp;
     float const depth=glm::dot(delta,forward);
-    float const farClip=cam.mZFar.get();
+    float const farClip=cam.mZFar;
     // Fall back to drawing if the camera basis has not been initialized.
     if(glm::dot(forward,forward)<0.25f || farClip<=0.f)return true;
     if(depth+radius<0.f || depth-radius>farClip)return false;
-    float fov=cam.mFov.get();
+    float fov=cam.mFov;
     if(fov>3.2f)fov*=0.01745329252f;
     if(fov<=0.f || fov>=3.14f)return true;
     float const slope=std::tan(fov*0.5f);
-    float const aspect=std::max(1.f,cam.mAspectRatio.get());
+    float const aspect=std::max(1.f,cam.mAspectRatio);
     float const width=std::max(0.f,depth)*slope*aspect+radius;
     float const vertical=std::max(0.f,depth)*slope+radius;
     return std::abs(glm::dot(delta,right))<=width &&
