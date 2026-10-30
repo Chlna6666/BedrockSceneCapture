@@ -209,7 +209,7 @@ void registerStates(Session& s,Clock::time_point started) {
                 tex.atlasItem=items[slot].defaultItem.get().mName.get();
                 auto const& uv=gfx->getTexture(slot,static_cast<int>(block->getData()));
                 tex.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
-                tex.sourcePath=uv.sourceFileLocation.mPath.get().value;
+                tex.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
                 tex.tileWidth=uv._texSizeW;
                 tex.tileHeight=uv._texSizeH;
                 tex.sourceWidth=uv._sourceImageWidth;
