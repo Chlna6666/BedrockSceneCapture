@@ -136,7 +136,9 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
         for(std::size_t i=0;i<mesh.faceSlots.size();++i){
             if(i){slots<<',';variants<<',';}
             auto slot=mesh.faceSlots[i];
-            if(slot<block.textureBindings().size()) slots<<slot;
+            auto const& bindings=block.textureBindings();
+            if(slot<bindings.size() && !bindings[slot].defaultName.empty()) slots<<slot;
+            else if(bindings.size()==1 && !bindings[0].defaultName.empty()) slots<<bindings[0].slot;
             else {slots<<"null";++unresolved;}
             variants<<"null";
         }
@@ -216,7 +218,19 @@ std::string meshJson(Mesh const& mesh) {
           << ',' << v.nx << ',' << v.ny << ',' << v.nz
           << ',' << v.u << ',' << v.v << ',' << v.abgr << ']';
     }
-    s << "],\"indices\":[";
+    s << ']';
+    if(mesh.registryVisualBounds){
+        s << ",\"geometry_confidence\":\"visual_shape_proxy\"";
+        if(!mesh.registryCrossPlanes)
+            s << ",\"face_order\":[\"up\",\"down\",\"north\",\"south\",\"west\",\"east\"]";
+        s << ",\"face_index_per_triangle\":[";
+        for(std::size_t i=0;i<mesh.faceSlots.size();++i){
+            if(i)s<<',';
+            s<<mesh.faceSlots[i];
+        }
+        s << ']';
+    }
+    s << ",\"indices\":[";
     for (std::size_t i=0;i<triangles.size();++i) {
         if (i) s << ',';
         s << triangles[i];
@@ -317,6 +331,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ",\"native_render_layer\":" << block.renderLayer
                    << ",\"block_actor_type\":" << block.blockActorType
                    << ",\"native_block_shape\":" << block.nativeShape
+                   << ",\"visual_bounds_mesh_generated\":"
+                   << (block.visualBoundsAvailable?"true":"false")
                    << ",\"visual_bounds\":["
                    << block.visualBounds[0] << ',' << block.visualBounds[1] << ',' << block.visualBounds[2]
                    << ',' << block.visualBounds[3] << ',' << block.visualBounds[4] << ',' << block.visualBounds[5]

@@ -34,6 +34,7 @@
 #include <filesystem>
 #include <memory>
 #include <array>
+#include <cmath>
 #include <map>
 #include <tuple>
 #include <mutex>
@@ -137,7 +138,7 @@ void finish(bool cancelled) {
         log().error("F8 export writer queue full; model library not submitted");
         return;
     }
-    log().info("F8 registry states={}, native samples={}, cancelled={}; writing {}",
+    log().info("F8 registry states={}, generated geometry states={}, cancelled={}; writing {}",
                registered,sampled,cancelled,directory.string());
 }
 void begin(LocalPlayer* player) {
@@ -247,6 +248,9 @@ void registerStates(Session& s,Clock::time_point started) {
             auto const& visual=gfx->mVisualShape.get();
             entry.visualBounds={visual.min.x,visual.min.y,visual.min.z,
                                 visual.max.x,visual.max.y,visual.max.z};
+            // Never emit non-finite native bounds into JSON.
+            for(auto& coordinate:entry.visualBounds)
+                if(!std::isfinite(coordinate)) coordinate=0.f;
             // Preserve shape information even when no safe standalone mesh
             // recipe exists. Models without a verified box remain unresolved.
             auto proxy=makeRegistryVisualBox(

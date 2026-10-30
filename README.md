@@ -1,57 +1,36 @@
-# BedrockSceneCapture — Minecraft Bedrock 1.26.51.1
+# BedrockSceneCapture — Bedrock 1.26.51.1
 
-LeviLamina 26.51.9 client mod. F8 exports native block-state registry information and native block geometry definitions even when those particular block states are not placed in any world.
+LeviLamina 26.51.9 **客户端**原生模组，目标为 BMCBL 3D 编辑器导出离线几何，而不是复制整个世界或贴图。
 
-## Controls
+## 功能
 
-- F7: Loaded-region incremental chunk wireframe inspection, nearest-first, capped at 512 cached chunks and bounded per-chunk line count. Native tessellation and GPU upload are incremental.
-- F8: Export all registered block-state permutations and static model definitions; at the main menu (when the optional MinecraftGame update hook works) this operates without any world, chunk loading or native tessellation. In-world captures can additionally sample live contextual meshes.
-- F9: Stop sampling; output is marked cancelled/incomplete.
+- **F8 — 注册表全量导出**：在主菜单或游戏内遍历已初始化的全部 BlockState（含原生 NBT、网络 ID、BlockShape、可视边界、纹理槽别名），**不读取任何区块或世界 LevelDB**。
+- **原生静态 BlockGeometry**：保留模型名称、父模型、元素、立方体、六个面、局部 UV、旋转、纹理映射。输出 `geometry_catalog.json`；BlockState 与该目录之间尚不存在经过验证的全量一一映射。
+- **CPU 直接构建网格**：对原生 `BlockShape::Block`、`SlimeBlock` 的可视 AABB 生成六面带法线三角形；对 `CrossTexture`、`DoublesidedCrossTexture`、`DoublesidedWideCrossTexture` 生成双面交叉平面。均在主线程分帧构建、全程不使用 GPU、不读 ChunkSource。具有相同可视边界、渲染层与形状的网格在内存中共享，磁盘按 SHA-256 去重。
+- **F7 — 世界调试线框**：仍依赖游戏已加载区块。与 F8 无区块模型库是两条独立链路。
+- **F9 — 取消 F8**：在清单里标记取消，不谎报完成。
 
-## Output
+## 与 BMCBL 贴图拼接
 
-All output is written to the LeviLamina data directory under `BedrockSceneCapture/export/1.26.51.1/`.
+BMCBL 的 `crates/bedrock-block-model` 已解析 `blocks.json`、`terrain_texture.json`、资源包几何；`ObjTextureResolver` 负责纹理解析。因此不导出 `textures/`，不复制图集和 GPU 材质。
 
-- `manifest.json`: schema, game/SDK versions, state/model/mesh counts, failure and unresolved UV counts, missing resource-pack fingerprint.
-- `blocks.json`: BlockState NBT hex, network ID, variant IDs; per-state texture slot alias, all known native UV variants and animation-frame indices, atlas item/source path, atlas rectangles, source dimensions, native render layer and PBR handles; sampled meshes carry per-triangle slot plus variant/frame reference.
-- `geometry_catalog.json`: all available native static BlockGeometry::Model names to hash-addressed JSON model definition references; relationships to specific block states are **not verified**.
-- `meshes/<sha256>.json`: deduplicated native tessellated triangle meshes (positions, normals, UV, colors, indices) **or** registered static block model element/face definitions with native textures, parent, transforms and UV. Distinguish by `topology` versus `kind`.
-- `materials.json`: native layer references and offline atlas UV remapping contract; texture pixels are always loaded from a matching local game/resource pack installation.
-- `entities.json`: explicit unsupported status until entity and block-entity renderer extraction is implemented.
-- `coverage.json`: per-state complete / partial / dynamic / unsupported with reasons.
+F8 输出目录：`BedrockSceneCapture/export/1.26.51.1/`。
 
-No `textures/` or `chunk_X_Z.bsc` is generated.
+- `blocks.json`：每个 BlockState 的 `native_block_shape`、`visual_bounds`、`visual_bounds_mesh_generated`、`texture_bindings[].resource_alias`，以及 `variants[].mesh_refs`、逐三角形 `mesh_triangle_texture_slots`。
+- `meshes/<sha256>.json`：去重网格。`uv_space=block_face_local` 表示 UV 在方块面本地空间，绝对不能当作动态地形图集坐标；`face_index_per_triangle` 与 `face_order` 明确六面拼接顺序（上、下、北、南、西、东）。交叉平面只使用第一个纹理槽，正反面分别提供几何。
+- `geometry_catalog.json`：静态 BlockGeometry 定义；离线端还需要完成父模型、变换和条件可见性组合。
+- `coverage.json`、`manifest.json`：覆盖与局限；`registry_only=true`、`loaded_chunks_scanned=0`。
+- `materials.json`：保留向后兼容的轻量化渲染层提示；不再提取 runtime atlas UV/PBR 数据。
+- `entities.json`：专用实体几何仍标为 unsupported。
 
-## Texture correctness and offline usage
+**精度边界**：注册表 AABB 和交叉平面生成的网格是 `geometry_confidence=visual_shape_proxy`，不是游戏 Tessellator 的逐顶点精确输出。复杂硬编码几何（楼梯、栅栏、门、流体）、邻居连接、动画、专用 BlockEntityRenderer 仍需 BMCBL 的规则或后续独立原生导出；不能把简单代理模型当作完整模型。仅空气可被标记为 complete。
 
-Native terrain UVs belong to the game's dynamically assembled atlas and **must not** be applied directly to a different atlas. For sampled triangles, first find the block state's referenced texture slot in `mesh_triangle_texture_slots`, look up `texture_bindings`, resolve `resource_alias` through the local Bedrock `terrain_texture.json` and active resource-pack priority, then rebase that triangle's atlas UV to the corresponding local texture or atlas rectangle. The original rectangle is preserved to derive local UV coordinates. If a triangle has null slot or the local asset is missing, report unresolved rather than guessing. The schema includes original atlas item and source hints but does not prove exact material fidelity without validation against an in-game render.
+## 构建
 
-Static model definitions already include face texture identifiers and texture maps; they do not require placement in the world to export. For static model definitions the offline renderer must reproduce the source's box/face transforms, UV rotation and texture-map resolution. The mapping of each BlockState to its static model definition has not yet been verified. Dynamic blocks (stairs, fences, water, lava and other neighbor-sensitive states) require offline neighbor rules; a finite set of mesh samples cannot guarantee every context. Block-entity models, actor animation, alpha blending and PBR material recipes still need dedicated capture.
+Windows x64，LLVM clang-cl 22 + xmake：
 
-Registered state enumeration is complete *for the initialized registry*; mesh and material completeness is not claimed. Only air is classified complete. Pack fingerprints are not yet available. Live model sampling is rate-limited to approximately 3 ms and 2 tessellator calls per game tick, with asynchronous hash and disk I/O. A main-menu capture has `definitions_only: true` in the manifest and no world samples. The model registry must already have initialized; its enumeration does not imply complete final world geometry. Menu update hooking is optional and in-world F8 remains available.
+```powershell
+pwsh -NoProfile -File tools/build_client.ps1
+```
 
-## Build and validation
-
-On Windows x64: `xmake repo -u`, `xmake f -a x64 -p windows -m release -y`, `xmake -y -v`.
-
-`python tools/verify_model_library.py --self-test` validates format invariants. `python tools/verify_model_library.py <export-dir>` checks counts, reference hashes, triangle texture slot arrays and JSON consistency. CI also checks the client mod package and unified LeviLamina allocator exports. In-game validation remains required.
-
-Texture mappings are extracted directly from `TextureAtlasItem.mTextureUVs` rather than indexing `getTexture()` with the packed legacy block state. All published atlas variants include their original atlas rectangles; ambiguous UV matches are marked unresolved, and transparent render classes remain hints rather than verified shader pipelines.
-
-## 验证状态与 CI 限制
-
-Windows 的实际原生 C++ 编译必须在带有 LeviLamina 26.51.9 client SDK 和 MSVC 兼容工具链的 Windows Runner 上完成。若 GitHub Actions Job 在分配 Runner 之前失败（Runner ID 为 0、Steps 为空），属于 CI 调度/账户/Runner 层失败，而不是 C++ 编译诊断，不能据此宣称代码编译失败或成功。新增独立 Linux JSON 自测任务以区分工具链与数据格式故障；完整原生打包仍必须由 Windows 工作流验证。
-
-Dedicated block-actor renderer classification now uses the native `BlockActorType` enum instead of substring tests (which could previously misidentify `minecraft:bedrock` as a bed). States of chests, signs, beds, banners and related block actors are still flagged unsupported for complete offline display, but their **available base block geometry** can now be sampled without claiming their dedicated renderer was captured. The block-actor type ID is exported for offline dispatch.
-
-Registry states are expanded a block type at a time within the frame budget instead of all at F8 startup. A single native type callback may still take longer than the budget; disk serialization remains off-thread.
-
-SDK type safety: main-menu F8 unwraps `gsl::not_null<Bedrock::NonOwnerPointer<IClientInstance>>` before querying the local player. The static model catalog retains `texture_stack` and ordered `face_index`. Render-class identifiers follow the native `BlockRenderLayer` enum; alpha/PBR shader-state details remain explicitly unverified.
-
-F7 now supports `TriangleStrip` wireframe geometry, avoids redundant QuadList diagonals and uses floor division for negative block-to-chunk coordinates. F8 shares immutable native atlas-variant snapshots between permutations, accesses registered static models under the engine's model mutex during resource-pack reloads, and reports asynchronous write completion to LeviLamina's regular logger.
-
-F8 also captures `TextureItem.carriedItem` atlas name, additive flag and all inventory/carried UV variant/frame mappings. The world-surface triangles continue to bind to `defaultItem` UVs. Concurrent F8 requests replace pending writer jobs (the in-flight writer completes first), so an outdated pending export cannot overwrite the latest requested export.
-
-Lifecycle safety: menu transitions cancel any stale in-world export before `BlockSource` pointers can be reused; a native renderer registry teardown cancels F8 before additional registry access. The F7 render hook disables its overlay and releases cached geometry on a caught C++ exception rather than allowing that exception to escape through the game renderer.
-
-Mesh UV integrity: a native tessellation with a missing/incomplete primary UV channel is exported as `uv_complete: false`; its triangle-to-texture bindings become `null` instead of falsely matching atlas UV `(0,0)`. Atlas slots with identical source path, rectangle, PBR handle and additive mode are considered equivalent texture aliases rather than conflicting bindings. The JSON validator also checks carried-model UV rectangles.
+或直接运行 `xmake f -p windows -a x64 -m release -y` 与 `xmake -y -v`。CI 执行 Windows x64 模组编译、打包校验，及 Linux 模型索引格式自测。构建通过不代表已完成实际游戏中的 F7/F8 功能验证。
