@@ -31,6 +31,9 @@ struct TextureBinding {
     std::uint16_t pbrHandle{};
     bool additive{};
     std::vector<TextureUVVariant> variants;
+    std::string carriedAtlasItem;
+    bool carriedAdditive{};
+    std::vector<TextureUVVariant> carriedVariants;
 };
 struct StaticModel {
     std::string name;

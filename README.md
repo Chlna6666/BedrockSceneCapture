@@ -49,3 +49,5 @@ Registry states are expanded a block type at a time within the frame budget inst
 SDK type safety: main-menu F8 unwraps `gsl::not_null<Bedrock::NonOwnerPointer<IClientInstance>>` before querying the local player. The static model catalog retains `texture_stack` and ordered `face_index`. Render-class identifiers follow the native `BlockRenderLayer` enum; alpha/PBR shader-state details remain explicitly unverified.
 
 F7 now supports `TriangleStrip` wireframe geometry, avoids redundant QuadList diagonals and uses floor division for negative block-to-chunk coordinates. F8 shares immutable native atlas-variant snapshots between permutations, accesses registered static models under the engine's model mutex during resource-pack reloads, and reports asynchronous write completion to LeviLamina's regular logger.
+
+F8 also captures `TextureItem.carriedItem` atlas name, additive flag and all inventory/carried UV variant/frame mappings. The world-surface triangles continue to bind to `defaultItem` UVs. Concurrent F8 requests replace pending writer jobs (the in-flight writer completes first), so an outdated pending export cannot overwrite the latest requested export.

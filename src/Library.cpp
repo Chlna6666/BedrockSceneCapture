@@ -296,19 +296,26 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                        << ",\"pbr_handle\":" << tex.pbrHandle
                        << ",\"additive\":" << (tex.additive?"true":"false")
                        << ",\"atlas_variants\":[";
-                bool firstUV=true;
-                for(auto const& variant:tex.variants){
-                    if(!firstUV)blocks<<',';
-                    firstUV=false;
-                    blocks << "{\"variant\":" << variant.variant
-                           << ",\"frame\":" << variant.frame
-                           << ",\"source_path\":" << quoted(variant.sourcePath)
-                           << ",\"atlas_uv\":[" << variant.atlasUv[0] << ',' << variant.atlasUv[1]
-                           << ',' << variant.atlasUv[2] << ',' << variant.atlasUv[3] << ']'
-                           << ",\"tile_size\":[" << variant.tileWidth << ',' << variant.tileHeight << ']'
-                           << ",\"source_size\":[" << variant.sourceWidth << ',' << variant.sourceHeight << ']'
-                           << ",\"pbr_handle\":" << variant.pbrHandle << '}';
-                }
+                auto writeVariants=[&](std::vector<TextureUVVariant> const& atlasVariants){
+                    bool firstUV=true;
+                    for(auto const& variant:atlasVariants){
+                        if(!firstUV)blocks<<',';
+                        firstUV=false;
+                        blocks << "{\"variant\":" << variant.variant
+                               << ",\"frame\":" << variant.frame
+                               << ",\"source_path\":" << quoted(variant.sourcePath)
+                               << ",\"atlas_uv\":[" << variant.atlasUv[0] << ',' << variant.atlasUv[1]
+                               << ',' << variant.atlasUv[2] << ',' << variant.atlasUv[3] << ']'
+                               << ",\"tile_size\":[" << variant.tileWidth << ',' << variant.tileHeight << ']'
+                               << ",\"source_size\":[" << variant.sourceWidth << ',' << variant.sourceHeight << ']'
+                               << ",\"pbr_handle\":" << variant.pbrHandle << '}';
+                    }
+                };
+                writeVariants(tex.variants);
+                blocks << "],\"carried_atlas_item\":" << quoted(tex.carriedAtlasItem)
+                       << ",\"carried_additive\":" << (tex.carriedAdditive?"true":"false")
+                       << ",\"carried_atlas_variants\":[";
+                writeVariants(tex.carriedVariants);
                 blocks << "]}";
             }
             blocks << "],\"variants\":[";

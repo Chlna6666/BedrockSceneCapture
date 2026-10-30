@@ -81,7 +81,11 @@ public:
     }
     bool submit(LibraryData&& task) {
         std::lock_guard lock(mutex);
-        if (jobs.size()>=2) return false;
+        if(stopping)return false;
+        // Only the latest pending export matters. A writing job is never
+        // interrupted (atomic manifest publication), and the new task runs
+        // immediately after it on the same writer thread.
+        jobs.clear();
         jobs.emplace_back(std::move(task));
         cv.notify_one();
         return true;
@@ -302,6 +306,26 @@ void registerStates(Session& s,Clock::time_point started) {
                         tex.sourceWidth=first.sourceWidth;
                         tex.sourceHeight=first.sourceHeight;
                         tex.pbrHandle=first.pbrHandle;
+                    }
+                    auto const& carried=items[slot].carriedItem.get();
+                    tex.carriedAtlasItem=carried.mName.get();
+                    tex.carriedAdditive=carried.mIsAdditive;
+                    auto const& carriedUVs=carried.mTextureUVs.get();
+                    for(std::size_t v=0;v<carriedUVs.size();++v){
+                        for(std::size_t f=0;f<carriedUVs[v].size();++f){
+                            auto const& uv=carriedUVs[v][f];
+                            TextureUVVariant mapped;
+                            mapped.variant=static_cast<std::uint32_t>(v);
+                            mapped.frame=static_cast<std::uint32_t>(f);
+                            mapped.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
+                            mapped.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
+                            mapped.tileWidth=uv._texSizeW;
+                            mapped.tileHeight=uv._texSizeH;
+                            mapped.sourceWidth=uv._sourceImageWidth;
+                            mapped.sourceHeight=uv._sourceImageHeight;
+                            mapped.pbrHandle=uv.mPBRTextureDataHandle;
+                            tex.carriedVariants.emplace_back(std::move(mapped));
+                        }
                     }
                     snapshot->emplace_back(std::move(tex));
                 }
