@@ -72,6 +72,7 @@ struct ChunkWire {
 };
 std::mutex gResourceMutex;
 std::weak_ptr<mce::BufferResourceService> gResource;
+std::weak_ptr<mce::BufferResourceService> gBoundService;
 std::unique_ptr<Tessellator> gInputTess;
 std::unique_ptr<BlockTessellator> gBlockTess;
 std::map<Key,ChunkWire> gChunks;
@@ -107,6 +108,7 @@ void reset() {
     gActive.reset();
     gInputTess.reset();
     gBlockTess.reset();
+    gBoundService.reset();
     gPlayer=nullptr;
     gRegion=nullptr;
     gFrame=0;
@@ -249,10 +251,16 @@ void update(BaseActorRenderContext& ctx){
     auto* player=ctx.mClientInstance.getLocalPlayer();
     if(!player){reset();return;}
     auto& region=player->getDimensionBlockSource();
-    if(player!=gPlayer || &region!=gRegion){
+    auto const service=ctx.mScreenContext.tessellator.mBufferResourceService;
+    if(service.expired()){reset();return;}
+    if(player!=gPlayer || &region!=gRegion ||
+       gBoundService.lock()!=service.lock()){
+        // Old meshes and white-texture handles belong to the previous GPU
+        // resource service and cannot survive renderer/device recreation.
         reset();
         gPlayer=player;
         gRegion=&region;
+        gBoundService=service;
         gBlockTess=std::make_unique<BlockTessellator>(&region);
         gBlockTess->mCachedGetBlock.get()=[&region](BlockPos const& p)->Block const&{
             return region.getBlock(p);
