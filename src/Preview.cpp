@@ -32,6 +32,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <deque>
 #include <limits>
 #include <map>
@@ -292,15 +293,32 @@ void update(BaseActorRenderContext& ctx){
     }
 }
 bool visible(BaseActorRenderContext& ctx,ChunkWire const& chunk,Vec3 const& camera) {
-    // Test both camera-relative and absolute bounds for SDK camera-space differences.
-    auto const x=static_cast<float>(chunk.x*16);
-    auto const z=static_cast<float>(chunk.z*16);
-    auto const y=static_cast<float>(chunk.minY);
-    auto const top=static_cast<float>(chunk.maxY);
-    auto const& frustum=ctx.mScreenContext.camera.mFrustum.get();
-    return frustum.cubeInFrustum({x-camera.x,y-camera.y,z-camera.z},
-                                 {x+16-camera.x,top-camera.y,z+16-camera.z}) ||
-           frustum.cubeInFrustum({x,y,z},{x+16,top,z+16});
+    // SDK 26.51.9 Frustum::cubeInFrustum is marked unavailable. Use the
+    // engine camera basis and a conservative chunk bounding sphere instead.
+    auto const& cam=ctx.mScreenContext.camera;
+    float const cx=static_cast<float>(chunk.x*16+8)-camera.x;
+    float const cy=(static_cast<float>(chunk.minY)+static_cast<float>(chunk.maxY))*0.5f-camera.y;
+    float const cz=static_cast<float>(chunk.z*16+8)-camera.z;
+    glm::vec3 const delta{cx,cy,cz};
+    float const height=static_cast<float>(chunk.maxY-chunk.minY)*0.5f;
+    float const radius=std::sqrt(8.0f*8.0f+height*height+8.0f*8.0f);
+    auto const forward=cam.mForward.get();
+    auto const right=cam.mRight.get();
+    auto const up=cam.mUp.get();
+    float const depth=glm::dot(delta,forward);
+    float const farClip=cam.mZFar.get();
+    // Fall back to drawing if the camera basis has not been initialized.
+    if(glm::dot(forward,forward)<0.25f || farClip<=0.f)return true;
+    if(depth+radius<0.f || depth-radius>farClip)return false;
+    float fov=cam.mFov.get();
+    if(fov>3.2f)fov*=0.01745329252f;
+    if(fov<=0.f || fov>=3.14f)return true;
+    float const slope=std::tan(fov*0.5f);
+    float const aspect=std::max(1.f,cam.mAspectRatio.get());
+    float const width=std::max(0.f,depth)*slope*aspect+radius;
+    float const vertical=std::max(0.f,depth)*slope+radius;
+    return std::abs(glm::dot(delta,right))<=width &&
+           std::abs(glm::dot(delta,up))<=vertical;
 }
 void render(BaseActorRenderContext& ctx){
     if(!gPreviewEnabled.load())return;
@@ -352,7 +370,7 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
         {std::lock_guard guard(gResourceMutex);
          gResource=ctx.mScreenContext.tessellator.mBufferResourceService;}
         update(ctx);
-    } else render(ctx);
+    } else ::bsc::render(ctx);
 }
 } // namespace
 std::weak_ptr<mce::BufferResourceService> renderBufferService(){
