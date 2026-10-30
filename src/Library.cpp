@@ -283,7 +283,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::map<std::string, std::uint32_t> statuses;
         std::ostringstream blocks, coverage;
         blocks << "{\"schema\":1,\"key_encoding\":\"native_block_state_nbt_le_hex\","
-                  "\"uv_space\":\"game_terrain_atlas\",\"blocks\":[";
+                  "\"uv_space\":\"per_mesh_declared\",\"blocks\":[";
         blocks.imbue(std::locale::classic());
         blocks << std::setprecision(std::numeric_limits<float>::max_digits10);
         coverage << "{\"schema\":1,\"states\":[";
@@ -384,8 +384,17 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 ++samples;
                 if (!firstVariant) blocks << ',';
                 firstVariant=false;
-                blocks << "{\"neighborhood\":" << quoted(sample.neighborhood)
-                       << ",\"mesh_refs\":[";
+                blocks << "{\"neighborhood\":" << quoted(sample.neighborhood);
+                if(sample.nativeObserved){
+                    blocks << ",\"capture_source\":\"native_block_tessellator\","
+                              "\"neighbor_network_ids\":[";
+                    for(std::size_t n=0;n<sample.neighborStateIds.size();++n){
+                        if(n)blocks<<',';
+                        blocks<<sample.neighborStateIds[n];
+                    }
+                    blocks<<']';
+                }
+                blocks << ",\"mesh_refs\":[";
                 bool firstMesh=true;
                 std::vector<std::string> perMeshTextureSlots;
                 std::vector<std::string> perMeshTextureVariants;
@@ -513,9 +522,23 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                          "\"remap_via_original_slot_uv_rect\":true,"
                          "\"unresolved_face_policy\":\"report_not_fallback\"}}\n";
         std::ostringstream entities;
-        entities << "{\"schema\":1,\"geometry\":[],\"skeletons\":[],\"animations\":[],"
-                    "\"status\":\"unsupported\","
-                    "\"reason\":\"No actor or block-entity renderer capture hook installed\"}\n";
+        entities << "{\"schema\":1,\"source\":\"native_block_actor_model_parts\",\"model_parts\":[";
+        bool firstActor=true;
+        for(auto const& actor:data.actorModels){
+            try{
+                auto hash=sha256(actor.geometryJson);
+                if(!writtenMeshes.contains(hash)){
+                    atomicFile(data.directory/"meshes"/(hash+".json"),actor.geometryJson);
+                    writtenMeshes.insert(hash);
+                }
+                if(!firstActor)entities<<',';
+                firstActor=false;
+                entities << "{\"name\":"<<quoted(actor.name)<<",\"mesh_ref\":"<<quoted(hash)<<'}';
+            }catch(std::exception const&){++writeFailures;}
+        }
+        entities << "],\"animations\":[],\"status\":"
+                 << (firstActor?"\"unsupported\"":"\"partial\"")
+                 << ",\"reason\":\"Native ModelPart/Cube base geometry only; scene transforms, text and animation are not yet captured\"}\n";
         std::ostringstream manifest;
         manifest << "{\"schema\":1,\"format\":\"BedrockSceneCaptureModelLibrary\","
                     "\"target_game_version\":\"1.26.51.1\","
@@ -533,7 +556,9 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"loaded_chunks_skipped\":" << data.skippedChunks
                  << ",\"sampled_blocks\":" << data.sampledBlocks
                  << ",\"failed_samples\":" << data.failedSamples + writeFailures
-                 << ",\"registry_only\":true,\"definitions_only\":" << (data.definitionOnly?"true":"false")
+                 << ",\"registry_only\":true,\"passive_world_observation\":" << (!data.definitionOnly?"true":"false")
+                  << ",\"captured_block_actor_models\":" << data.actorModels.size()
+                  << ",\"definitions_only\":" << (data.definitionOnly?"true":"false")
                  << ",\"cancelled\":" << (data.cancelled?"true":"false")
                  << ",\"complete\":false}\n";
         // Commit metadata last; an incomplete export is never advertised as complete.
