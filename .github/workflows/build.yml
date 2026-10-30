@@ -19,7 +19,9 @@ jobs:
       - uses: ZhongRuoyu/setup-llvm@v0
         with:
           llvm-version: 22
-      - uses: actions/cache@v4
+      - name: Restore xmake dependency cache
+        id: xmake-cache
+        uses: actions/cache/restore@v4
         with:
           path: ~/AppData/Local/.xmake
           key: bsc-26.51-${{ runner.os }}-${{ hashFiles('xmake.lua') }}
@@ -40,3 +42,9 @@ jobs:
           path: |
             bin/BedrockSceneCapture/
             !bin/**/*.pdb
+      - name: Save xmake dependencies even if compilation fails
+        if: ${{ always() && steps.xmake-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/AppData/Local/.xmake
+          key: bsc-26.51-${{ runner.os }}-${{ hashFiles('xmake.lua') }}
