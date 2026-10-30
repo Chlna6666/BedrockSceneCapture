@@ -125,6 +125,10 @@ void vertexMark(ChunkWire& chunk,Vec3 const& v){
     line(chunk,{v.x,v.y-d,v.z},{v.x,v.y+d,v.z});
     line(chunk,{v.x,v.y,v.z-d},{v.x,v.y,v.z+d});
 }
+int floorChunk(int blockCoord){
+    auto n=static_cast<std::int64_t>(blockCoord);
+    return static_cast<int>(n>=0?n/16:-((-n+15)/16));
+}
 void consume(ChunkWire& chunk,Mesh const& mesh,BlockPos const& blockPos) {
     auto at=[&](std::uint32_t i)->Vec3{
         auto const& v=mesh.vertices[i];
@@ -132,27 +136,38 @@ void consume(ChunkWire& chunk,Mesh const& mesh,BlockPos const& blockPos) {
                 static_cast<float>(blockPos.y-chunk.minY)+v.y,
                 static_cast<float>(blockPos.z-chunk.z*16)+v.z};
     };
+    auto edge=[&](std::uint32_t a,std::uint32_t b){
+        if(a>=mesh.vertices.size()||b>=mesh.vertices.size())return;
+        line(chunk,at(a),at(b));
+    };
     auto triangle=[&](std::uint32_t a,std::uint32_t b,std::uint32_t c){
-        if(a>=mesh.vertices.size()||b>=mesh.vertices.size()||c>=mesh.vertices.size())return;
-        auto va=at(a),vb=at(b),vc=at(c);
-        line(chunk,va,vb);line(chunk,vb,vc);line(chunk,vc,va);
+        edge(a,b);edge(b,c);edge(c,a);
     };
     auto const& indices=mesh.indices;
-    if(mesh.primitive==1){
-        std::size_t n=indices.empty()?mesh.vertices.size():indices.size();
-        auto index=[&](std::size_t i)->std::uint32_t{
-            return indices.empty()?static_cast<std::uint32_t>(i):indices[i];
-        };
-        for(std::size_t i=0;i+3<n;i+=4) {
+    std::size_t const n=indices.empty()?mesh.vertices.size():indices.size();
+    auto index=[&](std::size_t i)->std::uint32_t{
+        return indices.empty()?static_cast<std::uint32_t>(i):indices[i];
+    };
+    // QuadList perimeter edges only. Triangulating every quad inserted a
+    // redundant diagonal and doubled the GPU line count on dense blocks.
+    switch(mesh.primitive){
+    case 1:
+        for(std::size_t i=0;i+3<n && !chunk.truncated;i+=4){
             auto a=index(i),b=index(i+1),c=index(i+2),d=index(i+3);
-            triangle(a,b,c);triangle(a,c,d);
+            edge(a,b);edge(b,c);edge(c,d);edge(d,a);
         }
-    }else if(mesh.primitive==2){
-        std::size_t n=indices.empty()?mesh.vertices.size():indices.size();
-        auto index=[&](std::size_t i)->std::uint32_t{
-            return indices.empty()?static_cast<std::uint32_t>(i):indices[i];
-        };
-        for(std::size_t i=0;i+2<n;i+=3) triangle(index(i),index(i+1),index(i+2));
+        break;
+    case 2:
+        for(std::size_t i=0;i+2<n && !chunk.truncated;i+=3)
+            triangle(index(i),index(i+1),index(i+2));
+        break;
+    case 3:
+        for(std::size_t i=2;i<n && !chunk.truncated;++i){
+            if(i&1)triangle(index(i-1),index(i-2),index(i));
+            else triangle(index(i-2),index(i-1),index(i));
+        }
+        break;
+    default: break;
     }
     for(std::size_t i=0;i<mesh.vertices.size() &&
          gVertexMarks<MaxVertexMarksPerChunk && !chunk.truncated;++i)
@@ -180,8 +195,8 @@ void refreshLoaded(BlockSource& region,BlockPos const& center){
         std::vector<Key> nearest(loaded.begin(),loaded.end());
         std::sort(nearest.begin(),nearest.end(),[&](Key const& a,Key const& b){
             auto distance=[&](Key const& key){
-                long long dx=static_cast<long long>(key.first)-center.x/16;
-                long long dz=static_cast<long long>(key.second)-center.z/16;
+                long long dx=static_cast<long long>(key.first)-floorChunk(center.x);
+                long long dz=static_cast<long long>(key.second)-floorChunk(center.z);
                 return dx*dx+dz*dz;
             };
             return distance(a)<distance(b);
@@ -205,8 +220,8 @@ void refreshLoaded(BlockSource& region,BlockPos const& center){
             it->second.maxY=region.getMaxHeight();
             enqueue(key);
         } else if(it->second.ready && gFrame-it->second.builtFrame>RebuildFrames) {
-            auto dx=key.first-center.x/16;
-            auto dz=key.second-center.z/16;
+            auto dx=key.first-floorChunk(center.x);
+            auto dz=key.second-floorChunk(center.z);
             if(dx*dx+dz*dz<64)enqueue(key);
         }
     }
@@ -241,8 +256,8 @@ void update(BaseActorRenderContext& ctx){
         long long best=std::numeric_limits<long long>::max();
         for(auto it=gQueue.begin();it!=gQueue.end();++it){
             if(!gChunks.contains(*it))continue;
-            long long dx=static_cast<long long>(it->first)-center.x/16;
-            long long dz=static_cast<long long>(it->second)-center.z/16;
+            long long dx=static_cast<long long>(it->first)-floorChunk(center.x);
+            long long dz=static_cast<long long>(it->second)-floorChunk(center.z);
             auto dist=dx*dx+dz*dz;
             if(dist<best){best=dist;found=it;}
         }
