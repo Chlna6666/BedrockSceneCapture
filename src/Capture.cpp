@@ -133,7 +133,12 @@ void begin(LocalPlayer& player) {
     session->blockTess->mCachedGetBlock.get()=[&region](BlockPos const& p)->Block const&{
         return region.getBlock(p);
     };
-    session->tess=std::make_unique<Tessellator>(std::weak_ptr<mce::BufferResourceService>{});
+    auto service=renderBufferService();
+    if(service.expired()) {
+        log().warn("Cannot capture mesh: native renderer resources are not ready");
+        return;
+    }
+    session->tess=std::make_unique<Tessellator>(std::move(service));
     gWriter.start();
     log().info("BSC capture {} loaded chunks, directory {}",session->chunks.size(),session->path.string());
     gSession=std::move(session);

@@ -25,6 +25,7 @@
 #include "mc/world/level/chunk/ChunkSource.h"
 #include <array>
 #include <limits>
+#include <mutex>
 #include <atomic>
 #include <memory>
 #include <optional>
@@ -33,6 +34,8 @@
 namespace bsc {
 std::atomic_bool gPreviewEnabled{false};
 namespace {
+std::mutex gResourceMutex;
+std::weak_ptr<mce::BufferResourceService> gResource;
 std::unique_ptr<mce::Mesh> gWireMesh;
 std::unique_ptr<Tessellator> gInputTess;
 std::unique_ptr<BlockTessellator> gBlockTess;
@@ -186,9 +189,17 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
     LevelRendererPlayer,&LevelRendererPlayer::$renderBlockEntities,
     void,BaseActorRenderContext& ctx,bool alpha) {
     origin(ctx,alpha);
-    if(!alpha){ update(ctx); }
+    if(!alpha){
+        {std::lock_guard guard(gResourceMutex);
+         gResource=ctx.mScreenContext.tessellator.mBufferResourceService.get();}
+        update(ctx);
+    }
     else { render(ctx); }
 }
+}
+std::weak_ptr<mce::BufferResourceService> renderBufferService(){
+    std::lock_guard guard(gResourceMutex);
+    return gResource;
 }
 bool installPreview(){return BSCOverlayHook::hook()==0;}
 void uninstallPreview(){BSCOverlayHook::unhook();reset();gPreviewEnabled.store(false);}
