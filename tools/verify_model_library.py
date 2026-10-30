@@ -26,11 +26,20 @@ def validate(root: Path):
         status=b.get("status")
         if status not in counts:errors.append("invalid coverage status")
         else:counts[status]+=1
-        slots={x["slot"] for x in b.get("texture_bindings",[])}
+        bindings={x["slot"]:x for x in b.get("texture_bindings",[])}
+        slots=set(bindings)
+        for slot,texture in bindings.items():
+            variants=texture.get("atlas_variants",[])
+            keys={(uv["variant"],uv["frame"]) for uv in variants}
+            if len(keys)!=len(variants):errors.append("duplicate atlas variant/frame")
+            if variants and not texture.get("resource_alias") and not texture.get("atlas_item"):
+                errors.append("unresolvable texture identifier")
         for v in b.get("variants",[]):
             meshes=v.get("mesh_refs",[])
             face_slots=v.get("mesh_triangle_texture_slots",[])
-            if len(face_slots)!=len(meshes):errors.append("missing face binding arrays")
+            variant_slots=v.get("mesh_triangle_texture_variant_indices",[])
+            if len(face_slots)!=len(meshes) or len(variant_slots)!=len(meshes):
+                errors.append("missing face binding arrays")
             unknown_triangles+=v.get("unresolved_texture_triangles",0)
             for pos,digest in enumerate(meshes):
                 refs+=1
@@ -47,6 +56,21 @@ def validate(root: Path):
                     tri_slots=face_slots[pos]
                     if len(tri_slots)!=len(indices)//3:errors.append("triangle binding count")
                     if any(x is not None and x not in slots for x in tri_slots):errors.append("invalid texture slot")
+                    if pos<len(variant_slots):
+                        indices_for_mesh=variant_slots[pos]
+                        if len(indices_for_mesh)!=len(tri_slots):
+                            errors.append("triangle variant count mismatch")
+                        for slot,variant in zip(tri_slots,indices_for_mesh):
+                            if slot is None and variant is not None:
+                                errors.append("unresolved face must have null variant")
+                            if slot is not None:
+                                if not isinstance(variant,list) or len(variant)!=2:
+                                    errors.append("missing variant for resolved face")
+                                elif tuple(variant) not in {
+                                    (uv["variant"],uv["frame"])
+                                    for uv in bindings[slot].get("atlas_variants",[])
+                                }:
+                                    errors.append("referenced UV variant not exported")
     for model in static.get("models",[]):
         expected_hashes.add(model["mesh_ref"])
     for digest in expected_hashes:
@@ -78,6 +102,7 @@ def self_test():
             "blocks.json":{"blocks":[{"status":"partial","texture_bindings":[],
                                       "variants":[{"mesh_refs":[digest],
                                                    "mesh_triangle_texture_slots":[[]],
+                                                   "mesh_triangle_texture_variant_indices":[[]],
                                                    "unresolved_texture_triangles":0}]}]},
             "entities.json":{"status":"unsupported"},
             "materials.json":{"materials":[]},
@@ -99,5 +124,6 @@ if __name__=="__main__":
     args=parser.parse_args()
     if args.self_test:self_test()
     if args.directory:
-        print(json.dumps(validate(args.directory),ensure_ascii=False,indent=2))
-        if not validate(args.directory)["valid"]:raise SystemExit(1)
+        result=validate(args.directory)
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+        if not result["valid"]:raise SystemExit(1)

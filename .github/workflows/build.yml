@@ -9,6 +9,19 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  format-tests:
+    name: JSON model-library schema self-test (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python validators
+        run: python -m py_compile tools/verify_model_library.py tools/verify_package.py
+      - name: Validate atlas variant/mesh index invariants
+        run: python tools/verify_model_library.py --self-test
   windows-x64:
     runs-on: windows-latest
     timeout-minutes: 60
