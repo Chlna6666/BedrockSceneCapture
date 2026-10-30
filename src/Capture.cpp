@@ -215,7 +215,9 @@ void begin(LocalPlayer* player) {
     session->library.directory=gMod->getDataDir()/"export"/"1.26.51.1";
     // Full native state/geometry enumeration works both in the menu and in
     // game. Never inspect ChunkSource or require loaded chunks.
-    session->library.definitionOnly=true;
+    // Menu exports are definition-only. In-world exports can also contain
+    // real native scene and BlockActor model samples.
+    session->library.definitionOnly=(player==nullptr);
     session->player=player;
     // Use every registered permutation, not just the states present in loaded chunks.
     auto const& types=BlockTypeRegistry::get().mBlockLookupMap.get();
