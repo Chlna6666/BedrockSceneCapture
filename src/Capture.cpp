@@ -170,13 +170,9 @@ void begin(LocalPlayer* player) {
     for(auto const& [name,type]:types)
         if(type)session->registrationTypes.emplace_back(type.get());
     {
-        // Model definitions can be rebuilt during a resource-pack reload.
-        // Store stable names only, and reacquire a guarded pointer on each tick.
-        std::unique_lock lock(BlockGraphics::mBlockModelAccess(),std::try_to_lock);
-        if(!lock.owns_lock()){
-            log().warn("F8: native model registry is updating; retry");
-            return;
-        }
+        // mBlockModelAccess() is declared in SDK 26.51.9 but is not exported
+        // by bedrock_runtime_api.lib (LNK2019). Enumerate only on the game
+        // thread and keep model names, never pointers, across updates.
         for(auto const& [name,model]:BlockGraphics::mModels())
             if(model)session->geometryModels.emplace_back(name);
     }
@@ -344,8 +340,9 @@ void registerStates(Session& s,Clock::time_point started) {
 void registerNativeGeometry(Session& s,Clock::time_point start) {
     while(s.geometryCursor<s.geometryModels.size() &&
           Clock::now()-start<std::chrono::milliseconds(3)){
-        std::unique_lock lock(BlockGraphics::mBlockModelAccess(),std::try_to_lock);
-        if(!lock.owns_lock())return; // do not stall rendering during pack reload
+        // The game-thread update is the only supported place to read the
+        // native registry: the SDK's model mutex symbol is not linkable.
+        if(!BlockGraphics::mInitialized())return;
         auto const& name=s.geometryModels[s.geometryCursor++];
         auto const& models=BlockGraphics::mModels();
         auto it=models.find(name);
