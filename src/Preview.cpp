@@ -24,6 +24,7 @@
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/chunk/ChunkSource.h"
 #include <array>
+#include <limits>
 #include <atomic>
 #include <memory>
 #include <optional>
