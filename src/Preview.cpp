@@ -107,7 +107,7 @@ void reset() {
     gWhiteReady=false;
 }
 Vec3 cameraPosition(BaseActorRenderContext const& ctx){
-    auto const& p=ctx.mScreenContext.camera.mPosition;
+    auto const& p=ctx.mScreenContext.camera.mPosition.get();
     return Vec3{p.x,p.y,p.z};
 }
 void line(ChunkWire& chunk,Vec3 const& a,Vec3 const& b){

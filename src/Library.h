@@ -12,6 +12,13 @@ struct ModelSample {
     std::vector<Mesh> meshes;
     std::uint32_t missing{};
 };
+struct TextureUVVariant {
+    std::uint32_t variant{},frame{};
+    std::string sourcePath;
+    std::array<float,4> atlasUv{};
+    std::uint16_t tileWidth{},tileHeight{},sourceWidth{},sourceHeight{};
+    std::uint16_t pbrHandle{};
+};
 struct TextureBinding {
     std::uint32_t slot{};
     std::string defaultName;
@@ -21,6 +28,7 @@ struct TextureBinding {
     std::array<float,4> atlasUv{};
     std::uint16_t tileWidth{},tileHeight{},sourceWidth{},sourceHeight{};
     std::uint16_t pbrHandle{};
+    std::vector<TextureUVVariant> variants;
 };
 struct StaticModel {
     std::string name;
@@ -33,6 +41,7 @@ struct BlockResource {
     std::uint16_t legacyData{};
     std::array<float, 4> atlasUv{};
     bool dynamic{};
+    int renderLayer{-1};
     bool blockEntity{};
     bool air{};
     std::vector<ModelSample> samples;

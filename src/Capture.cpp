@@ -199,6 +199,7 @@ void registerStates(Session& s,Clock::time_point started) {
         entry.dynamic=requiresNeighbors(entry.name);
         entry.blockEntity=usesBlockEntityRenderer(entry.name);
         if(auto* gfx=BlockGraphics::getForBlock(*block)){
+            entry.renderLayer=static_cast<int>(gfx->mRenderLayer);
             auto const& items=gfx->mTextureItems.get();
             entry.textures.reserve(items.size());
             for(std::size_t slot=0;slot<items.size();++slot){
@@ -206,15 +207,38 @@ void registerStates(Session& s,Clock::time_point started) {
                 tex.slot=static_cast<std::uint32_t>(slot);
                 tex.defaultName=items[slot].defaultName.get();
                 tex.carriedName=items[slot].carriedName.get();
-                tex.atlasItem=items[slot].defaultItem.get().mName.get();
-                auto const& uv=gfx->getTexture(slot,static_cast<int>(block->getData()));
-                tex.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
-                tex.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
-                tex.tileWidth=uv._texSizeW;
-                tex.tileHeight=uv._texSizeH;
-                tex.sourceWidth=uv._sourceImageWidth;
-                tex.sourceHeight=uv._sourceImageHeight;
-                tex.pbrHandle=uv.mPBRTextureDataHandle;
+                auto const& atlas=items[slot].defaultItem.get();
+                tex.atlasItem=atlas.mName.get();
+                // Do not use Block::getData() as an index into the atlas variant
+                // array: it is a packed block-state value, not a texture index.
+                // Export every native (variant, animation-frame) UV mapping.
+                auto const& nativeUVs=atlas.mTextureUVs.get();
+                for(std::size_t v=0;v<nativeUVs.size();++v){
+                    for(std::size_t frame=0;frame<nativeUVs[v].size();++frame){
+                        auto const& uv=nativeUVs[v][frame];
+                        TextureUVVariant variant;
+                        variant.variant=static_cast<std::uint32_t>(v);
+                        variant.frame=static_cast<std::uint32_t>(frame);
+                        variant.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
+                        variant.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
+                        variant.tileWidth=uv._texSizeW;
+                        variant.tileHeight=uv._texSizeH;
+                        variant.sourceWidth=uv._sourceImageWidth;
+                        variant.sourceHeight=uv._sourceImageHeight;
+                        variant.pbrHandle=uv.mPBRTextureDataHandle;
+                        tex.variants.emplace_back(std::move(variant));
+                    }
+                }
+                if(!tex.variants.empty()){
+                    auto const& first=tex.variants.front();
+                    tex.atlasUv=first.atlasUv;
+                    tex.sourcePath=first.sourcePath;
+                    tex.tileWidth=first.tileWidth;
+                    tex.tileHeight=first.tileHeight;
+                    tex.sourceWidth=first.sourceWidth;
+                    tex.sourceHeight=first.sourceHeight;
+                    tex.pbrHandle=first.pbrHandle;
+                }
                 if(slot==0)entry.atlasUv=tex.atlasUv;
                 entry.textures.emplace_back(std::move(tex));
             }

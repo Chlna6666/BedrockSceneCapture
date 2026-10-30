@@ -13,7 +13,7 @@ LeviLamina 26.51.9 client mod. F8 exports native block-state registry informatio
 All output is written to the LeviLamina data directory under `BedrockSceneCapture/export/1.26.51.1/`.
 
 - `manifest.json`: schema, game/SDK versions, state/model/mesh counts, failure and unresolved UV counts, missing resource-pack fingerprint.
-- `blocks.json`: BlockState NBT hex, network ID, variant IDs; per-state texture slot alias, atlas item/source path, atlas rectangle, tile sizes and PBR handle; sampled native meshes and per-triangle texture slot mapping.
+- `blocks.json`: BlockState NBT hex, network ID, variant IDs; per-state texture slot alias, all known native UV variants and animation-frame indices, atlas item/source path, atlas rectangles, source dimensions, native render layer and PBR handles; sampled meshes carry per-triangle slot plus variant/frame reference.
 - `geometry_catalog.json`: all available native static BlockGeometry::Model names to hash-addressed JSON model definition references; relationships to specific block states are **not verified**.
 - `meshes/<sha256>.json`: deduplicated native tessellated triangle meshes (positions, normals, UV, colors, indices) **or** registered static block model element/face definitions with native textures, parent, transforms and UV. Distinguish by `topology` versus `kind`.
 - `materials.json`: native layer references and offline atlas UV remapping contract; texture pixels are always loaded from a matching local game/resource pack installation.
@@ -35,3 +35,5 @@ Registered state enumeration is complete *for the initialized registry*; mesh an
 On Windows x64: `xmake repo -u`, `xmake f -a x64 -p windows -m release -y`, `xmake -y -v`.
 
 `python tools/verify_model_library.py --self-test` validates format invariants. `python tools/verify_model_library.py <export-dir>` checks counts, reference hashes, triangle texture slot arrays and JSON consistency. CI also checks the client mod package and unified LeviLamina allocator exports. In-game validation remains required.
+
+Texture mappings are extracted directly from `TextureAtlasItem.mTextureUVs` rather than indexing `getTexture()` with the packed legacy block state. All published atlas variants include their original atlas rectangles; ambiguous UV matches are marked unresolved, and transparent render classes remain hints rather than verified shader pipelines.

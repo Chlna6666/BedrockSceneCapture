@@ -110,40 +110,58 @@ std::vector<std::uint32_t> triangulate(Mesh const& mesh) {
     }
     return triangles;
 }
-std::string faceBindingJson(Mesh const& mesh,BlockResource const& block,
-                            std::uint64_t& unresolved) {
+struct TriangleBindings {
+    std::string slots;
+    std::string variants;
+    std::uint64_t unresolved{};
+};
+TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
     auto triangles=triangulate(mesh);
-    std::ostringstream o;
-    o << '[';
+    std::ostringstream slots, variants;
+    slots << '[';
+    variants << '[';
     constexpr float epsilon=0.00003f;
+    std::uint64_t unresolved=0;
     for(std::size_t i=0;i<triangles.size();i+=3){
-        if(i)o<<',';
-        TextureBinding const* match=nullptr;
+        if(i){slots<<',';variants<<',';}
+        TextureBinding const* selected=nullptr;
+        TextureUVVariant const* selectedVariant=nullptr;
         bool ambiguous=false;
-        for(auto const& binding:block.textures){
-            auto const& rect=binding.atlasUv;
-            float const loU=std::min(rect[0],rect[2])-epsilon;
-            float const hiU=std::max(rect[0],rect[2])+epsilon;
-            float const loV=std::min(rect[1],rect[3])-epsilon;
-            float const hiV=std::max(rect[1],rect[3])+epsilon;
-            bool inside=true;
-            for(std::size_t j=0;j<3;++j){
-                auto const& v=mesh.vertices[triangles[i+j]];
-                if(v.u<loU||v.u>hiU||v.v<loV||v.v>hiV){inside=false;break;}
+        for(auto const& texture:block.textures){
+            for(auto const& candidate:texture.variants){
+                auto const& rect=candidate.atlasUv;
+                auto loU=std::min(rect[0],rect[2])-epsilon;
+                auto hiU=std::max(rect[0],rect[2])+epsilon;
+                auto loV=std::min(rect[1],rect[3])-epsilon;
+                auto hiV=std::max(rect[1],rect[3])+epsilon;
+                bool inside=true;
+                for(std::size_t j=0;j<3;++j){
+                    auto const& v=mesh.vertices[triangles[i+j]];
+                    if(v.u<loU||v.u>hiU||v.v<loV||v.v>hiV){inside=false;break;}
+                }
+                if(!inside)continue;
+                if(!selected){
+                    selected=&texture;
+                    selectedVariant=&candidate;
+                }else if(texture.slot!=selected->slot ||
+                         candidate.sourcePath!=selectedVariant->sourcePath ||
+                         candidate.atlasUv!=selectedVariant->atlasUv){
+                    ambiguous=true;
+                }
             }
-            if(!inside)continue;
-            if(!match){match=&binding;continue;}
-            if(match->defaultName!=binding.defaultName ||
-               match->sourcePath!=binding.sourcePath ||
-               match->atlasUv!=binding.atlasUv)ambiguous=true;
         }
-        if(!match||ambiguous){
+        if(!selected || ambiguous){
             ++unresolved;
-            o<<"null";
-        }else o<<match->slot;
+            slots<<"null";
+            variants<<"null";
+        }else{
+            slots<<selected->slot;
+            variants<<'['<<selectedVariant->variant<<','<<selectedVariant->frame<<']';
+        }
     }
-    o << ']';
-    return o.str();
+    slots << ']';
+    variants << ']';
+    return {slots.str(),variants.str(),unresolved};
 }
 std::string meshJson(Mesh const& mesh) {
     auto triangles=triangulate(mesh);
@@ -222,6 +240,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             }
         }
         for (auto const& block : data.blocks) {
+            if(block.renderLayer>=0) layers.insert(static_cast<std::uint32_t>(block.renderLayer));
             std::string stateStatus;
             std::string reason;
             if (block.air) {
@@ -246,6 +265,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ",\"network_id\":" << block.networkId
                    << ",\"legacy_data\":" << block.legacyData
                    << ",\"status\":" << quoted(stateStatus)
+                   << ",\"native_render_layer\":" << block.renderLayer
                    << ",\"atlas_uv\":[" << block.atlasUv[0] << ',' << block.atlasUv[1]
                    << ',' << block.atlasUv[2] << ',' << block.atlasUv[3] << ']'
                    << ",\"texture_bindings\":[";
@@ -262,7 +282,22 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                        << ',' << tex.atlasUv[2] << ',' << tex.atlasUv[3] << ']'
                        << ",\"tile_size\":[" << tex.tileWidth << ',' << tex.tileHeight << ']'
                        << ",\"source_size\":[" << tex.sourceWidth << ',' << tex.sourceHeight << ']'
-                       << ",\"pbr_handle\":" << tex.pbrHandle << '}';
+                       << ",\"pbr_handle\":" << tex.pbrHandle
+                       << ",\"atlas_variants\":[";
+                bool firstUV=true;
+                for(auto const& variant:tex.variants){
+                    if(!firstUV)blocks<<',';
+                    firstUV=false;
+                    blocks << "{\"variant\":" << variant.variant
+                           << ",\"frame\":" << variant.frame
+                           << ",\"source_path\":" << quoted(variant.sourcePath)
+                           << ",\"atlas_uv\":[" << variant.atlasUv[0] << ',' << variant.atlasUv[1]
+                           << ',' << variant.atlasUv[2] << ',' << variant.atlasUv[3] << ']'
+                           << ",\"tile_size\":[" << variant.tileWidth << ',' << variant.tileHeight << ']'
+                           << ",\"source_size\":[" << variant.sourceWidth << ',' << variant.sourceHeight << ']'
+                           << ",\"pbr_handle\":" << variant.pbrHandle << '}';
+                }
+                blocks << "]}";
             }
             blocks << "],\"variants\":[";
             bool firstVariant=true;
@@ -274,12 +309,13 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                        << ",\"mesh_refs\":[";
                 bool firstMesh=true;
                 std::vector<std::string> perMeshTextureSlots;
+                std::vector<std::string> perMeshTextureVariants;
                 std::uint64_t localUnmatched=0;
                 for (auto const& mesh : sample.meshes) {
                     try {
                         auto content = meshJson(mesh);
                         auto hash = sha256(content);
-                        auto textureSlotData=faceBindingJson(mesh,block,localUnmatched);
+                        auto bindings=faceBindingJson(mesh,block);
                         if(!writtenMeshes.contains(hash)){
                             atomicFile(data.directory/"meshes"/(hash+".json"),content);
                             writtenMeshes.insert(hash);
@@ -288,7 +324,9 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                         if (!firstMesh) blocks << ',';
                         firstMesh=false;
                         blocks << quoted(hash);
-                        perMeshTextureSlots.push_back(std::move(textureSlotData));
+                        perMeshTextureSlots.push_back(std::move(bindings.slots));
+                        perMeshTextureVariants.push_back(std::move(bindings.variants));
+                        localUnmatched+=bindings.unresolved;
                         ++meshRefs;
                     } catch (std::exception const&) {
                         ++writeFailures;
@@ -298,6 +336,11 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 for(std::size_t i=0;i<perMeshTextureSlots.size();++i){
                     if(i)blocks<<',';
                     blocks<<perMeshTextureSlots[i];
+                }
+                blocks << "],\"mesh_triangle_texture_variant_indices\":[";
+                for(std::size_t i=0;i<perMeshTextureVariants.size();++i){
+                    if(i)blocks<<',';
+                    blocks<<perMeshTextureVariants[i];
                 }
                 unmatchedFaces+=localUnmatched;
                 blocks << "],\"unresolved_texture_triangles\":" << localUnmatched
@@ -343,18 +386,39 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         for (auto layer : layers) {
             if (!firstLayer) materials << ',';
             firstLayer=false;
+            std::string_view className="unknown";
+            bool alphaTest=false,doubleSided=false;
+            switch(layer){
+            case 0:className="double_sided";doubleSided=true;break;
+            case 1:case 2:className="water";break;
+            case 3:case 4:className="blend";break;
+            case 5:className="opaque";break;
+            case 6:className="light_source";break;
+            case 7:case 8:case 9:case 10:case 11:case 12:
+            case 18:case 19:case 20:case 21:className="alpha_test";alphaTest=true;break;
+            case 13:className="end_portal";break;
+            case 14:className="barrier";break;
+            case 15:className="light";break;
+            case 16:className="structure_void";break;
+            case 17:className="opaque";break;
+            default:break;
+            }
             materials << "{\"id\":\"terrain/layer_" << layer
                       << "\",\"render_layer\":" << layer
+                      << ",\"render_class\":" << quoted(std::string(className))
+                      << ",\"alpha_test\":" << (alphaTest?"true":"false")
+                      << ",\"double_sided\":" << (doubleSided?"true":"false")
                       << ",\"uv_space\":\"terrain_atlas\","
                          "\"atlas_ref\":\"terrain_atlas\","
                          "\"texture_resolution\":\"external\","
-                         "\"blend_mode\":\"unresolved\"}";
+                         "\"exact_shader_state\":\"unresolved\"}";
         }
         materials << "],\"atlas_binding\":{"
                         "\"coordinate_space\":\"runtime_atlas_uv\","
                         "\"asset_resolver\":\"local_resource_pack_terrain_texture_json\","
                         "\"face_texture_slot_mapping\":\"blocks.variants.mesh_triangle_texture_slots\","
-                        "\"slot_assets\":\"blocks.texture_bindings\","
+                        "\"slot_assets\":\"blocks.texture_bindings.atlas_variants\",
+                        "\"triangle_variant_lookup\":\"blocks.variants.mesh_triangle_texture_variant_indices\","
                         "\"require_exact_atlas_layout\":false,"
                         "\"remap_via_original_slot_uv_rect\":true,"
                         "\"unresolved_face_policy\":\"report_not_fallback\"}}\n";
