@@ -28,6 +28,17 @@ Mesh positions are relative to their block; UVs are from the native terrain atla
 
 **Safety/performance:** Uses available loaded chunks only, never generates new chunks, caps game-thread scan at ~3 ms and 512 cells per tick, performs I/O on a separate thread (max 2 pending chunks), and discards native pointers when the world/player changes. An F8 snapshot processes loaded chunks progressively; blocks may change while a large scan is in progress, so it is **not atomic**.
 
+## Loader status and troubleshooting
+
+The mod must appear in **LeviLamina's** load **and enable** log, not merely in BLoader's DLL enumeration. Expected messages include
+`BedrockSceneCapture loaded: client build`, `BSC enabled: F7 wireframe` and, after entering a world, `BSC local-player tick hook active`.
+On F8, `F8 capture requested` should appear and the full output directory is logged.
+
+For a client build, `mods/BedrockSceneCapture/manifest.json` **must** have `"platform": "client"`.
+An unexpanded `${modPlatform}` placeholder causes LeviLamina to reject the mod entirely even if BLoader says its DLL was loaded;
+then neither F7 nor F8 can work. Always install the newly built DLL **and manifest.json** together, replacing the old package.
+The GitHub Actions build now verifies the packaged manifest and DLL as a hard failure before uploading the artifact.
+
 ## Build
 
 GitHub Actions builds automatically after every push to `main`, PR and manual dispatch, targeting Windows x64 with LLVM 22, xmake, and LeviLamina 26.51.9 client SDK. The dependency remains within game version `26.51.x`. Download the `BedrockSceneCapture-26.51.x-windows-x64` artifact from Actions.

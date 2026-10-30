@@ -2,7 +2,7 @@
   "format_version": 3,
   "format_uuid": "487348f9-3275-47d4-a3e6-79ce9a412868",
   "tooth": "github.com/Chlna6666/BedrockSceneCapture",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "info": {
     "name": "BedrockSceneCapture",
     "description": "Client-side native loaded chunk geometry and block state capture",

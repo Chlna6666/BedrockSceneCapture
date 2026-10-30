@@ -10,7 +10,11 @@ public:
         static BedrockSceneCapture v;return v;
     }
     BedrockSceneCapture():mod(*ll::mod::NativeMod::current()){}
-    bool load(){initialize(mod);return true;}
+    bool load(){
+        initialize(mod);
+        mod.getLogger().info("BedrockSceneCapture loaded: client build, mod directory: {}",mod.getModDir().string());
+        return true;
+    }
     bool enable(){
         if(!installCapture()) {
             mod.getLogger().error("Could not install tick hook");return false;
@@ -18,10 +22,14 @@ public:
         if(!installPreview()){
             uninstallCapture();mod.getLogger().error("Could not install render hook");return false;
         }
-        mod.getLogger().info("BSC ready: F7 wireframe, F8 capture loaded chunks, F9 cancel");
+        mod.getLogger().info("BSC enabled: F7 wireframe, F8 capture loaded chunks, F9 cancel");
+        mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"captures").string());
         return true;
     }
-    bool disable(){uninstallPreview();uninstallCapture();return true;}
+    bool disable(){
+        mod.getLogger().info("BSC disabling: unhooking render and tick");
+        uninstallPreview();uninstallCapture();return true;
+    }
     bool unload(){return true;}
 };
 }

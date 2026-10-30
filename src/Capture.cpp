@@ -212,6 +212,11 @@ void uninstallCapture(){
 }
 void onTick(LocalPlayer& player) {
     if(!gMod)return;
+    static bool tickReported=false;
+    if(!tickReported){
+        tickReported=true;
+        log().info("BSC local-player tick hook active; game focus required for F7/F8/F9");
+    }
     bool focus=gameFocused();
     bool f7=focus&&(GetAsyncKeyState(VK_F7)&0x8000);
     bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);
@@ -225,7 +230,7 @@ void onTick(LocalPlayer& player) {
     }
     try {
         if(cancel&&gSession){finish(true);return;}
-        if(start){begin(player);return;}
+        if(start){log().info("F8 capture requested");begin(player);return;}
         if(!gSession)return;
         if(gSession->player!=&player||gSession->region!=&player.getDimensionBlockSource()){
             finish(true);return;
