@@ -4,7 +4,7 @@ Experimental Bedrock 1.26.51.1 client-native model catalog exporter for LeviLami
 
 ## Hotkeys
 
-- F7: Existing 5×5×5 triangle-edge / vertex overlay. Full chunk-cached preview is not yet implemented.
+- F7: Incrementally cache native triangle/vertex wireframes for loaded chunks, prioritize nearer chunks, and render GPU batches with frustum checks. The current GPU cache is limited to 512 closest loaded chunks; large chunks may truncate wireframe output.
 - F8: Enumerate all registered block-state permutations and sample native world geometry from loaded chunks.
 - F9: Cancel in-progress F8 (writes an explicitly partial index).
 

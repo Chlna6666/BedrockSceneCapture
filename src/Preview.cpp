@@ -28,6 +28,7 @@
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/chunk/ChunkSource.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -174,6 +175,20 @@ void refreshLoaded(BlockSource& region,BlockPos const& center){
     };
     if(auto* map=source.getChunkMap())collect(*map);
     if(loaded.empty())collect(source.getStorage());
+    // Bound memory before allocating cache entries: admit the nearest loaded chunks.
+    if(loaded.size()>MaxChunkMeshes){
+        std::vector<Key> nearest(loaded.begin(),loaded.end());
+        std::sort(nearest.begin(),nearest.end(),[&](Key const& a,Key const& b){
+            auto distance=[&](Key const& key){
+                long long dx=static_cast<long long>(key.first)-center.x/16;
+                long long dz=static_cast<long long>(key.second)-center.z/16;
+                return dx*dx+dz*dz;
+            };
+            return distance(a)<distance(b);
+        });
+        nearest.resize(MaxChunkMeshes);
+        loaded=std::set<Key>(nearest.begin(),nearest.end());
+    }
     for(auto it=gChunks.begin();it!=gChunks.end();){
         if(!loaded.contains(it->first)){
             if(gActive==it->first)gActive.reset();
@@ -195,21 +210,9 @@ void refreshLoaded(BlockSource& region,BlockPos const& center){
             if(dx*dx+dz*dz<64)enqueue(key);
         }
     }
-    if(gChunks.size()>MaxChunkMeshes){
-        // Guard VRAM/CPU use for extreme render distances; remove furthest entries first.
-        while(gChunks.size()>MaxChunkMeshes){
-            auto furthest=gChunks.begin();
-            long long maxDist=-1;
-            for(auto it=gChunks.begin();it!=gChunks.end();++it){
-                long long dx=static_cast<long long>(it->first.first)-center.x/16;
-                long long dz=static_cast<long long>(it->first.second)-center.z/16;
-                auto distance=dx*dx+dz*dz;
-                if(distance>maxDist){maxDist=distance;furthest=it;}
-            }
-            if(gActive==furthest->first)gActive.reset();
-            gChunks.erase(furthest);
-        }
-    }
+    // Remove queued work for chunks that have been evicted or unloaded.
+    gQueue.erase(std::remove_if(gQueue.begin(),gQueue.end(),
+        [&](Key const& key){return !gChunks.contains(key);}),gQueue.end());
 }
 void update(BaseActorRenderContext& ctx){
     if(!gPreviewEnabled.load()){
