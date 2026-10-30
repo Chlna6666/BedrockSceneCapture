@@ -23,6 +23,7 @@
 #include <deque>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <mutex>
 #include <set>
 #include <thread>
