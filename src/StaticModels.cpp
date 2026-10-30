@@ -3,7 +3,9 @@
 #include "mc/client/renderer/block/block_geometry/Element.h"
 #include "mc/client/renderer/block/block_geometry/ElementBox.h"
 #include "mc/client/renderer/block/block_geometry/Face.h"
+#include <algorithm>
 #include <iomanip>
+#include <vector>
 #include <limits>
 #include <locale>
 #include <sstream>
@@ -39,7 +41,11 @@ std::string serializeStaticGeometry(std::string const& name,BlockGeometry::Model
       << ",\"parent\":" << jsonString(model.mParent.get())
       << ",\"texture_map\":{";
     bool first=true;
-    for(auto const& [key,value]:model.mTextureMap.get()){
+    std::vector<std::pair<std::string,std::string>> orderedTextures;
+    for(auto const& [key,value]:model.mTextureMap.get())
+        orderedTextures.emplace_back(key,value);
+    std::sort(orderedTextures.begin(),orderedTextures.end());
+    for(auto const& [key,value]:orderedTextures){
         if(!first)o<<',';
         first=false;
         o<<jsonString(key)<<':'<<jsonString(value);

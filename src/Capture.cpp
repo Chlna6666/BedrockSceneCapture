@@ -100,6 +100,7 @@ struct Session {
     std::size_t typeCursor{};
     std::vector<Block const*> registrations;
     std::unordered_map<Block const*,std::size_t> lookup;
+    std::unordered_map<BlockGraphics const*,std::shared_ptr<std::vector<TextureBinding> const>> textureCache;
     std::size_t registerCursor{};
     std::vector<std::pair<std::string,BlockGeometry::Model const*>> geometryModels;
     std::size_t geometryCursor{};
@@ -247,50 +248,57 @@ void registerStates(Session& s,Clock::time_point started) {
             entry.blockEntity=false;
             break;
         }
-        if(auto* gfx=BlockGraphics::getForBlock(*block)){
+        if(auto const* gfx=BlockGraphics::getForBlock(*block)){
             entry.renderLayer=static_cast<int>(gfx->mRenderLayer);
-            auto const& items=gfx->mTextureItems.get();
-            entry.textures.reserve(items.size());
-            for(std::size_t slot=0;slot<items.size();++slot){
-                TextureBinding tex;
-                tex.slot=static_cast<std::uint32_t>(slot);
-                tex.defaultName=items[slot].defaultName.get();
-                tex.carriedName=items[slot].carriedName.get();
-                auto const& atlas=items[slot].defaultItem.get();
-                tex.atlasItem=atlas.mName.get();
-                // Do not use Block::getData() as an index into the atlas variant
-                // array: it is a packed block-state value, not a texture index.
-                // Export every native (variant, animation-frame) UV mapping.
-                auto const& nativeUVs=atlas.mTextureUVs.get();
-                for(std::size_t v=0;v<nativeUVs.size();++v){
-                    for(std::size_t frame=0;frame<nativeUVs[v].size();++frame){
-                        auto const& uv=nativeUVs[v][frame];
-                        TextureUVVariant variant;
-                        variant.variant=static_cast<std::uint32_t>(v);
-                        variant.frame=static_cast<std::uint32_t>(frame);
-                        variant.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
-                        variant.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
-                        variant.tileWidth=uv._texSizeW;
-                        variant.tileHeight=uv._texSizeH;
-                        variant.sourceWidth=uv._sourceImageWidth;
-                        variant.sourceHeight=uv._sourceImageHeight;
-                        variant.pbrHandle=uv.mPBRTextureDataHandle;
-                        tex.variants.emplace_back(std::move(variant));
+            auto cached=s.textureCache.find(gfx);
+            if(cached==s.textureCache.end()){
+                // Native atlas tables belong to BlockGraphics, not to individual
+                // block-state permutations. Share one immutable snapshot.
+                auto snapshot=std::make_shared<std::vector<TextureBinding>>();
+                auto const& items=gfx->mTextureItems.get();
+                snapshot->reserve(items.size());
+                for(std::size_t slot=0;slot<items.size();++slot){
+                    TextureBinding tex;
+                    tex.slot=static_cast<std::uint32_t>(slot);
+                    tex.defaultName=items[slot].defaultName.get();
+                    tex.carriedName=items[slot].carriedName.get();
+                    auto const& atlas=items[slot].defaultItem.get();
+                    tex.atlasItem=atlas.mName.get();
+                    tex.additive=atlas.mIsAdditive;
+                    auto const& nativeUVs=atlas.mTextureUVs.get();
+                    for(std::size_t variantIndex=0;variantIndex<nativeUVs.size();++variantIndex){
+                        for(std::size_t frameIndex=0;frameIndex<nativeUVs[variantIndex].size();++frameIndex){
+                            auto const& uv=nativeUVs[variantIndex][frameIndex];
+                            TextureUVVariant variant;
+                            variant.variant=static_cast<std::uint32_t>(variantIndex);
+                            variant.frame=static_cast<std::uint32_t>(frameIndex);
+                            variant.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
+                            variant.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
+                            variant.tileWidth=uv._texSizeW;
+                            variant.tileHeight=uv._texSizeH;
+                            variant.sourceWidth=uv._sourceImageWidth;
+                            variant.sourceHeight=uv._sourceImageHeight;
+                            variant.pbrHandle=uv.mPBRTextureDataHandle;
+                            tex.variants.emplace_back(std::move(variant));
+                        }
                     }
+                    if(!tex.variants.empty()){
+                        auto const& first=tex.variants.front();
+                        tex.atlasUv=first.atlasUv;
+                        tex.sourcePath=first.sourcePath;
+                        tex.tileWidth=first.tileWidth;
+                        tex.tileHeight=first.tileHeight;
+                        tex.sourceWidth=first.sourceWidth;
+                        tex.sourceHeight=first.sourceHeight;
+                        tex.pbrHandle=first.pbrHandle;
+                    }
+                    snapshot->emplace_back(std::move(tex));
                 }
-                if(!tex.variants.empty()){
-                    auto const& first=tex.variants.front();
-                    tex.atlasUv=first.atlasUv;
-                    tex.sourcePath=first.sourcePath;
-                    tex.tileWidth=first.tileWidth;
-                    tex.tileHeight=first.tileHeight;
-                    tex.sourceWidth=first.sourceWidth;
-                    tex.sourceHeight=first.sourceHeight;
-                    tex.pbrHandle=first.pbrHandle;
-                }
-                if(slot==0)entry.atlasUv=tex.atlasUv;
-                entry.textures.emplace_back(std::move(tex));
+                cached=s.textureCache.emplace(gfx,std::move(snapshot)).first;
             }
+            entry.textures=cached->second;
+            if(!entry.textureBindings().empty())
+                entry.atlasUv=entry.textureBindings().front().atlasUv;
         }
         auto index=s.library.blocks.size();
         s.lookup.emplace(block,index);

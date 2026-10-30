@@ -127,7 +127,7 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
         TextureBinding const* selected=nullptr;
         TextureUVVariant const* selectedVariant=nullptr;
         bool ambiguous=false;
-        for(auto const& texture:block.textures){
+        for(auto const& texture:block.textureBindings()){
             for(auto const& candidate:texture.variants){
                 auto const& rect=candidate.atlasUv;
                 auto loU=std::min(rect[0],rect[2])-epsilon;
@@ -281,7 +281,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ',' << block.atlasUv[2] << ',' << block.atlasUv[3] << ']'
                    << ",\"texture_bindings\":[";
             bool firstTexture=true;
-            for(auto const& tex:block.textures){
+            for(auto const& tex:block.textureBindings()){
                 if(!firstTexture)blocks<<',';
                 firstTexture=false;
                 blocks << "{\"slot\":" << tex.slot
@@ -294,6 +294,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                        << ",\"tile_size\":[" << tex.tileWidth << ',' << tex.tileHeight << ']'
                        << ",\"source_size\":[" << tex.sourceWidth << ',' << tex.sourceHeight << ']'
                        << ",\"pbr_handle\":" << tex.pbrHandle
+                       << ",\"additive\":" << (tex.additive?"true":"false")
                        << ",\"atlas_variants\":[";
                 bool firstUV=true;
                 for(auto const& variant:tex.variants){

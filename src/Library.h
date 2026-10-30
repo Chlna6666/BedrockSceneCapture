@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,7 @@ struct TextureBinding {
     std::array<float,4> atlasUv{};
     std::uint16_t tileWidth{},tileHeight{},sourceWidth{},sourceHeight{};
     std::uint16_t pbrHandle{};
+    bool additive{};
     std::vector<TextureUVVariant> variants;
 };
 struct StaticModel {
@@ -46,7 +48,11 @@ struct BlockResource {
     int blockActorType{};
     bool air{};
     std::vector<ModelSample> samples;
-    std::vector<TextureBinding> textures;
+    std::shared_ptr<std::vector<TextureBinding> const> textures;
+    std::vector<TextureBinding> const& textureBindings() const {
+        static std::vector<TextureBinding> const empty;
+        return textures ? *textures : empty;
+    }
 };
 struct LibraryData {
     std::filesystem::path directory;
