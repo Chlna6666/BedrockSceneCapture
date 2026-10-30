@@ -69,7 +69,15 @@ void atomicFile(std::filesystem::path const& path, std::string const& data) {
         if (!f) throw std::runtime_error("cannot write " + tmp.string());
         f.close();
         if (!f) throw std::runtime_error("cannot close " + tmp.string());
-        std::filesystem::rename(tmp, path);
+        // MSVC's filesystem rename semantics have varied across CRT
+        // versions when the destination already exists. Use an explicit
+        // atomic replacement for repeated F8 exports on Windows.
+        if(!MoveFileExW(tmp.c_str(),path.c_str(),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)){
+            throw std::system_error(static_cast<int>(GetLastError()),
+                                    std::system_category(),
+                                    "cannot atomically replace "+path.string());
+        }
     } catch (...) {
         std::error_code ignored;
         std::filesystem::remove(tmp, ignored);
