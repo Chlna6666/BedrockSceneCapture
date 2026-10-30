@@ -88,7 +88,7 @@ def self_test():
         for name,obj in examples.items():
             (p/name).write_text(json.dumps(obj),encoding="utf-8")
         assert validate(p)["valid"]
-        (p/"meshes"/(digest+".json")).write_bytes(mesh+b"x")
+        (p/"meshes"/(digest+".json")).write_bytes(mesh+b" ")
         assert not validate(p)["valid"],"hash corruption not detected"
     print("Model library schema/hash self-test passed")
 
