@@ -1,8 +1,7 @@
-name: Bedrock 26.51.x client build
+name: Bedrock 1.26.51.1 client build
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 concurrency:
   group: bsc-build-${{ github.ref }}
@@ -35,11 +34,11 @@ jobs:
         run: xmake -y -v
       - name: Verify packaged client manifest and DLL
         run: python tools/verify_package.py
-      - name: Decode format self-test
-        run: python tools/inspect.py --self-test
+      - name: Validate model library schema self-test
+        run: python tools/verify_model_library.py --self-test
       - uses: actions/upload-artifact@v4
         with:
-          name: BedrockSceneCapture-26.51.x-windows-x64
+          name: BedrockSceneCapture-1.26.51.1-windows-x64
           if-no-files-found: error
           path: |
             bin/BedrockSceneCapture/
