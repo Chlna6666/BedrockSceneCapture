@@ -250,10 +250,9 @@ void registerStates(Session& s,Clock::time_point started) {
             if(cached==s.textureCache.end()){
                 // Native atlas tables belong to BlockGraphics, not to individual
                 // block-state permutations. Share one immutable snapshot.
-                // BMCBL resolves face textures from its own resource-pack
-                // repository (blocks.json/terrain_texture.json). Capture only
-                // the exact native face-slot aliases; do not extract atlas
-                // pixels, runtime atlas UVs, or GPU material state.
+                // Capture only source atlas RECTANGLE metadata (no texture pixels).
+                // Native triangle UVs are expressed in the current runtime atlas;
+                // the rectangles map them back to local resource-pack texture aliases.
                 auto snapshot=std::make_shared<std::vector<TextureBinding>>();
                 auto const& items=gfx->mTextureItems.get();
                 snapshot->reserve(items.size());
@@ -262,6 +261,56 @@ void registerStates(Session& s,Clock::time_point started) {
                     tex.slot=static_cast<std::uint32_t>(slot);
                     tex.defaultName=items[slot].defaultName.get();
                     tex.carriedName=items[slot].carriedName.get();
+                    auto const& atlas=items[slot].defaultItem.get();
+                    tex.atlasItem=atlas.mName.get();
+                    tex.additive=atlas.mIsAdditive;
+                    auto const& nativeUVs=atlas.mTextureUVs.get();
+                    for(std::size_t variantIndex=0;variantIndex<nativeUVs.size();++variantIndex){
+                        for(std::size_t frameIndex=0;frameIndex<nativeUVs[variantIndex].size();++frameIndex){
+                            auto const& uv=nativeUVs[variantIndex][frameIndex];
+                            TextureUVVariant variant;
+                            variant.variant=static_cast<std::uint32_t>(variantIndex);
+                            variant.frame=static_cast<std::uint32_t>(frameIndex);
+                            variant.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
+                            variant.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
+                            variant.tileWidth=uv._texSizeW;
+                            variant.tileHeight=uv._texSizeH;
+                            variant.sourceWidth=uv._sourceImageWidth;
+                            variant.sourceHeight=uv._sourceImageHeight;
+                            variant.pbrHandle=uv.mPBRTextureDataHandle;
+                            tex.variants.emplace_back(std::move(variant));
+                        }
+                    }
+                    if(!tex.variants.empty()){
+                        auto const& first=tex.variants.front();
+                        tex.atlasUv=first.atlasUv;
+                        tex.sourcePath=first.sourcePath;
+                        tex.tileWidth=first.tileWidth;
+                        tex.tileHeight=first.tileHeight;
+                        tex.sourceWidth=first.sourceWidth;
+                        tex.sourceHeight=first.sourceHeight;
+                        tex.pbrHandle=first.pbrHandle;
+                    }
+                    auto const& carried=items[slot].carriedItem.get();
+                    tex.carriedAtlasItem=carried.mName.get();
+                    tex.carriedAdditive=carried.mIsAdditive;
+                    auto const& carriedUVs=carried.mTextureUVs.get();
+                    for(std::size_t v=0;v<carriedUVs.size();++v){
+                        for(std::size_t f=0;f<carriedUVs[v].size();++f){
+                            auto const& uv=carriedUVs[v][f];
+                            TextureUVVariant mapped;
+                            mapped.variant=static_cast<std::uint32_t>(v);
+                            mapped.frame=static_cast<std::uint32_t>(f);
+                            mapped.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
+                            mapped.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
+                            mapped.tileWidth=uv._texSizeW;
+                            mapped.tileHeight=uv._texSizeH;
+                            mapped.sourceWidth=uv._sourceImageWidth;
+                            mapped.sourceHeight=uv._sourceImageHeight;
+                            mapped.pbrHandle=uv.mPBRTextureDataHandle;
+                            tex.carriedVariants.emplace_back(std::move(mapped));
+                        }
+                    }
                     snapshot->emplace_back(std::move(tex));
                 }
                 cached=s.textureCache.emplace(gfx,std::move(snapshot)).first;
