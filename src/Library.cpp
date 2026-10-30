@@ -465,11 +465,11 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                         "\"coordinate_space\":\"runtime_atlas_uv\","
                         "\"asset_resolver\":\"local_resource_pack_terrain_texture_json\","
                         "\"face_texture_slot_mapping\":\"blocks.variants.mesh_triangle_texture_slots\","
-                        "\"slot_assets\":\"blocks.texture_bindings.atlas_variants\",
-                        "\"triangle_variant_lookup\":\"blocks.variants.mesh_triangle_texture_variant_indices\","
-                        "\"require_exact_atlas_layout\":false,"
-                        "\"remap_via_original_slot_uv_rect\":true,"
-                        "\"unresolved_face_policy\":\"report_not_fallback\"}}\n";
+                         "\"slot_assets\":\"blocks.texture_bindings.atlas_variants\","
+                         "\"triangle_variant_lookup\":\"blocks.variants.mesh_triangle_texture_variant_indices\","
+                         "\"require_exact_atlas_layout\":false,"
+                         "\"remap_via_original_slot_uv_rect\":true,"
+                         "\"unresolved_face_policy\":\"report_not_fallback\"}}\n";
         std::ostringstream entities;
         entities << "{\"schema\":1,\"geometry\":[],\"skeletons\":[],\"animations\":[],"
                     "\"status\":\"unsupported\","
