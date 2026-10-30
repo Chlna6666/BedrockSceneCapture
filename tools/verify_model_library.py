@@ -49,6 +49,13 @@ def validate(root: Path):
             if variants and not texture.get("resource_alias") and not texture.get("atlas_item"):
                 errors.append("unresolvable texture identifier")
         for v in b.get("variants",[]):
+            if v.get("capture_source")=="native_block_tessellator":
+                neighbors=v.get("neighbor_network_ids",[])
+                if (not isinstance(neighbors,list) or len(neighbors)!=7 or
+                    any(not isinstance(x,int) or x<0 for x in neighbors)):
+                    errors.append("invalid native neighbor state signature")
+                elif neighbors[0]!=b.get("network_id"):
+                    errors.append("native scene center does not match block state")
             meshes=v.get("mesh_refs",[])
             face_slots=v.get("mesh_triangle_texture_slots",[])
             variant_slots=v.get("mesh_triangle_texture_variant_indices",[])
@@ -103,6 +110,24 @@ def validate(root: Path):
                                     for uv in bindings[slot].get("atlas_variants",[])
                                 }:
                                     errors.append("referenced UV variant not exported")
+    actor_models=entities.get("model_parts",[])
+    if not isinstance(actor_models,list):
+        actor_models=[]
+        errors.append("invalid block actor model list")
+    for actor in actor_models:
+        digest=actor.get("mesh_ref")
+        if not isinstance(digest,str) or HASH_RE.fullmatch(digest) is None:
+            errors.append("invalid block actor model reference")
+            continue
+        expected_hashes.add(digest)
+        try:
+            actor_json=json.loads((root/"meshes"/(digest+".json")).read_text(encoding="utf-8"))
+            if actor_json.get("source")!="native_block_actor_model_parts" or not actor_json.get("parts"):
+                errors.append("invalid native BlockActor model structure")
+        except (OSError,ValueError) as exc:
+            errors.append(f"unreadable native block actor model: {exc}")
+    if manifest.get("captured_block_actor_models") not in (None,len(actor_models)):
+        errors.append("native block actor model count")
     for model in static.get("models",[]):
         digest=model.get("mesh_ref")
         if not isinstance(digest,str) or HASH_RE.fullmatch(digest) is None:
@@ -124,7 +149,9 @@ def validate(root: Path):
         errors.append("static model count")
     if unknown_triangles!=manifest.get("unresolved_texture_triangles"):
         errors.append("unresolved triangle count")
-    if entities.get("status")!="unsupported" and not entities.get("geometry"):
+    if entities.get("status")!="unsupported" and not (
+        entities.get("geometry") or actor_models
+    ):
         errors.append("entities marked supported without geometry")
     return {"valid":not errors,"errors":errors,
             "states":len(states),"geometry_hashes":len(expected_hashes),
@@ -179,6 +206,18 @@ def self_test():
         for name in ("blocks.json","manifest.json"):
             (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
         assert validate(p)["valid"],"face-local slot must be resolvable without atlas"
+        # Passive native scene uses exact center and six-neighbor state IDs.
+        variant["capture_source"]="native_block_tessellator"
+        state["network_id"]=42
+        variant["neighbor_network_ids"]=[42,1,2,3,4,5,6]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        assert validate(p)["valid"],"native neighbor signature should be valid"
+        variant["neighbor_network_ids"][0]=99
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        assert "native scene center does not match block state" in validate(p)["errors"]
+        variant.pop("capture_source")
+        variant.pop("neighbor_network_ids")
+        state.pop("network_id")
         variant["mesh_triangle_texture_variant_indices"]=[[[0,0]]]
         (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
         assert "face-local texture must not use runtime atlas variant" in validate(p)["errors"]
