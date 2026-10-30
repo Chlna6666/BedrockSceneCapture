@@ -4,11 +4,13 @@ import argparse
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 import tempfile
 
 INDEXES=("manifest.json","blocks.json","entities.json","materials.json","coverage.json","geometry_catalog.json")
 STATUSES=("complete","dynamic","partial","unsupported")
+HASH_RE=re.compile(r"[0-9a-f]{64}")
 
 def validate(root: Path):
     docs={name:json.loads((root/name).read_text(encoding="utf-8")) for name in INDEXES}
@@ -28,6 +30,8 @@ def validate(root: Path):
         else:counts[status]+=1
         bindings={x["slot"]:x for x in b.get("texture_bindings",[])}
         slots=set(bindings)
+        if len(bindings)!=len(b.get("texture_bindings",[])):
+            errors.append("duplicate texture slot")
         for slot,texture in bindings.items():
             variants=texture.get("atlas_variants",[])
             keys={(uv["variant"],uv["frame"]) for uv in variants}
@@ -43,8 +47,16 @@ def validate(root: Path):
             unknown_triangles+=v.get("unresolved_texture_triangles",0)
             for pos,digest in enumerate(meshes):
                 refs+=1
+                if not isinstance(digest,str) or HASH_RE.fullmatch(digest) is None:
+                    errors.append("invalid mesh hash reference")
+                    continue
                 expected_hashes.add(digest)
-                mesh=json.loads((root/"meshes"/(digest+".json")).read_text(encoding="utf-8"))
+                path=root/"meshes"/(digest+".json")
+                try:
+                    mesh=json.loads(path.read_text(encoding="utf-8"))
+                except (OSError,ValueError) as exc:
+                    errors.append(f"unreadable referenced mesh {digest}: {exc}")
+                    continue
                 if mesh.get("topology")!="triangles":errors.append("mesh topology")
                 vertices=mesh.get("vertices",[])
                 indices=mesh.get("indices",[])
@@ -72,11 +84,20 @@ def validate(root: Path):
                                 }:
                                     errors.append("referenced UV variant not exported")
     for model in static.get("models",[]):
-        expected_hashes.add(model["mesh_ref"])
+        digest=model.get("mesh_ref")
+        if not isinstance(digest,str) or HASH_RE.fullmatch(digest) is None:
+            errors.append("invalid static geometry hash reference")
+            continue
+        expected_hashes.add(digest)
     for digest in expected_hashes:
-        if len(digest)!=64:errors.append("invalid hash")
-        content=(root/"meshes"/(digest+".json")).read_bytes()
-        if hashlib.sha256(content).hexdigest()!=digest:errors.append("mesh content hash mismatch")
+        path=root/"meshes"/(digest+".json")
+        try:
+            content=path.read_bytes()
+        except OSError as exc:
+            errors.append(f"missing referenced geometry {digest}: {exc}")
+            continue
+        if hashlib.sha256(content).hexdigest()!=digest:
+            errors.append("mesh content hash mismatch")
     if counts!=coverage.get("counts"):errors.append("coverage counts")
     if refs!=manifest.get("native_mesh_refs"):errors.append("native reference count")
     if len(static.get("models",[]))!=manifest.get("static_geometry_models"):
@@ -115,6 +136,12 @@ def self_test():
         assert validate(p)["valid"]
         (p/"meshes"/(digest+".json")).write_bytes(mesh+b" ")
         assert not validate(p)["valid"],"hash corruption not detected"
+        # A reference must never be interpreted as a filesystem path, even
+        # when the JSON indexes originate from an untrusted export folder.
+        (p/"meshes"/(digest+".json")).write_bytes(mesh)
+        examples["blocks.json"]["blocks"][0]["variants"][0]["mesh_refs"]=["../../traversal"]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        assert "invalid mesh hash reference" in validate(p)["errors"]
     print("Model library schema/hash self-test passed")
 
 if __name__=="__main__":
