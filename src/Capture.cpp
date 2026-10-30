@@ -162,11 +162,11 @@ void blockCell(Session& s,Block const& block,BlockPos const& p,std::uint32_t ind
         PaletteEntry entry;
         entry.name=block.getTypeName();
         entry.serializedBlockNbt=block.mSerializationId.get().toBinaryNbt(true);
-        entry.networkId=block.mNetworkId.get();
+        entry.networkId=block.mNetworkId;
         entry.legacyData=block.getData();
         if(auto* gfx=BlockGraphics::getForBlock(block)){
             auto const& uv=gfx->getTexture(0,0);
-            entry.atlasUv={uv._u0.get(),uv._v0.get(),uv._u1.get(),uv._v1.get()};
+            entry.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
         }
         std::uint16_t id=static_cast<std::uint16_t>(chunk.palette.size());
         chunk.palette.emplace_back(std::move(entry));
