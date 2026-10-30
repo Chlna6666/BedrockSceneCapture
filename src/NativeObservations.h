@@ -6,10 +6,10 @@
 #include <vector>
 namespace bsc {
 struct NativeObservation {
-    // The seven network IDs refer to the same process-local block registry
+    // The 27 network IDs refer to the same process-local block registry
     // exported by blocks.json, not IDs portable across game versions.
-    // Order: center, up, down, north, south, west, east.
-    std::array<std::uint32_t,7> stateIds{};
+    // Order: center, then dy/dz/dx ascending (-1..1), excluding center.
+    std::array<std::uint32_t,27> stateIds{};
     Mesh mesh;
 };
 struct ActorModelSnapshot {

@@ -51,7 +51,7 @@ def validate(root: Path):
         for v in b.get("variants",[]):
             if v.get("capture_source")=="native_block_tessellator":
                 neighbors=v.get("neighbor_network_ids",[])
-                if (not isinstance(neighbors,list) or len(neighbors)!=7 or
+                if (not isinstance(neighbors,list) or len(neighbors)!=27 or
                     any(not isinstance(x,int) or x<0 for x in neighbors)):
                     errors.append("invalid native neighbor state signature")
                 elif neighbors[0]!=b.get("network_id"):
@@ -206,10 +206,10 @@ def self_test():
         for name in ("blocks.json","manifest.json"):
             (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
         assert validate(p)["valid"],"face-local slot must be resolvable without atlas"
-        # Passive native scene uses exact center and six-neighbor state IDs.
+        # Passive native scene uses exact center and 26-neighbor state IDs.
         variant["capture_source"]="native_block_tessellator"
         state["network_id"]=42
-        variant["neighbor_network_ids"]=[42,1,2,3,4,5,6]
+        variant["neighbor_network_ids"]=[42]+list(range(1,27))
         (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
         assert validate(p)["valid"],"native neighbor signature should be valid"
         variant["neighbor_network_ids"][0]=99

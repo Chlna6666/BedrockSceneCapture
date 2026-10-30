@@ -13,7 +13,7 @@ struct ModelSample {
     std::vector<std::shared_ptr<Mesh const>> meshes;
     std::uint32_t missing{};
     bool nativeObserved{};
-    std::array<std::uint32_t,7> neighborStateIds{};
+    std::array<std::uint32_t,27> neighborStateIds{};
 };
 struct TextureUVVariant {
     std::uint32_t variant{},frame{};

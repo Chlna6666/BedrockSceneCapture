@@ -31,16 +31,18 @@ namespace {
 std::atomic_bool armed{false};
 std::mutex mutex;
 struct IdHash {
-    std::size_t operator()(std::array<std::uint32_t,7> const& values) const noexcept {
+    std::size_t operator()(std::array<std::uint32_t,27> const& values) const noexcept {
         std::size_t h=0x9e3779b9u;
         for(auto v:values)h ^= static_cast<std::size_t>(v)+0x9e3779b9u+(h<<6)+(h>>2);
         return h;
     }
 };
-std::unordered_set<std::array<std::uint32_t,7>,IdHash> seen;
+std::unordered_set<std::array<std::uint32_t,27>,IdHash> seen;
 std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
-constexpr std::size_t MaxDistinctScenes=4096;
+constexpr std::size_t MaxDistinctScenes=2048;
+constexpr std::size_t MaxTotalVertices=2'000'000;
+std::size_t recordedVertices{};
 constexpr std::size_t MaxNativeVertices=8192;
 bool requiredWorldShape(BlockShape s){
     switch(s){
@@ -151,20 +153,25 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     auto const& points=raw.mPositions.get();
     if(fromPos>points.size() || points.size()==fromPos ||
        points.size()-fromPos>MaxNativeVertices)return;
-    std::array<std::uint32_t,7> ids{};
+    std::array<std::uint32_t,27> ids{};
     ids[0]=block.mNetworkId;
     auto* region=owner.mRegion;
     if(!region)return;
-    // Only the six neighboring palette-state identities are read for the
-    // already-rendered block. No chunk enumeration or independent tessellation.
-    std::array<BlockPos,6> const neighbors{{
-        {pos.x,pos.y+1,pos.z},{pos.x,pos.y-1,pos.z},
-        {pos.x,pos.y,pos.z-1},{pos.x,pos.y,pos.z+1},
-        {pos.x-1,pos.y,pos.z},{pos.x+1,pos.y,pos.z}
-    }};
-    for(std::size_t i=0;i<6;++i)ids[i+1]=region->getBlock(neighbors[i]).mNetworkId;
+    // Diagonal and vertical neighbors affect stair corners, wall joins,
+    // fluid corner heights and overlay visibility. Preserve a 3x3x3
+    // signature, never assume the six cardinal blocks are sufficient.
+    std::size_t next=1;
+    for(int dy=-1;dy<=1;++dy)
+        for(int dz=-1;dz<=1;++dz)
+            for(int dx=-1;dx<=1;++dx){
+                if(dx==0 && dy==0 && dz==0)continue;
+                ids[next++]=region->getBlock(BlockPos{
+                    pos.x+dx,pos.y+dy,pos.z+dz}).mNetworkId;
+            }
     std::unique_lock lock(mutex,std::try_to_lock);
-    if(!lock.owns_lock()||seen.size()>=MaxDistinctScenes||!seen.emplace(ids).second)return;
+    if(!lock.owns_lock()||seen.size()>=MaxDistinctScenes||
+       recordedVertices+points.size()-fromPos>MaxTotalVertices||
+       !seen.emplace(ids).second)return;
     Mesh mesh;
     mesh.primitive=static_cast<std::uint32_t>(raw.mMode);
     mesh.layer=static_cast<std::uint32_t>(gfx->mRenderLayer);
@@ -202,6 +209,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
         seen.erase(ids);
         return;
     }
+    recordedVertices+=mesh.vertices.size();
     pending.push_back(NativeObservation{ids,std::move(mesh)});
 }
 LL_TYPE_INSTANCE_HOOK(BSCNativeBlockHook,ll::memory::HookPriority::Normal,
@@ -271,6 +279,7 @@ void clearNativeObservations(){
     armed.store(false,std::memory_order_release);
     std::lock_guard lock(mutex);
     seen.clear();
+    recordedVertices=0;
     pending.clear();
     actorModels.clear();
 }
