@@ -1,6 +1,7 @@
 #include "Capture.h"
 #include "Library.h"
 #include "MeshUtils.h"
+#include "RegistryGeometry.h"
 #include "StaticModels.h"
 #include "Preview.h"
 #include "ll/api/memory/Hook.h"
@@ -13,6 +14,7 @@
 #include "mc/client/renderer/block/BlockGraphics.h"
 #include "mc/client/renderer/block/TextureItem.h"
 #include "mc/client/renderer/block/block_geometry/Model.h"
+#include "mc/world/phys/AABB.h"
 #include "mc/client/renderer/texture/TextureUVCoordinateSet.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/BlockSource.h"
@@ -31,6 +33,8 @@
 #include <deque>
 #include <filesystem>
 #include <memory>
+#include <array>
+#include <map>
 #include <mutex>
 #include <set>
 #include <stdexcept>
@@ -105,19 +109,12 @@ Writer gWriter;
 struct Session {
     LibraryData library;
     LocalPlayer* player{};
-    BlockSource* region{};
     std::vector<BlockType const*> registrationTypes;
     std::size_t typeCursor{},permutationCursor{};
-    std::unordered_map<Block const*,std::size_t> lookup;
+    std::map<std::pair<std::array<float,6>,std::uint32_t>,std::shared_ptr<Mesh const>> registryBoxCache;
     std::unordered_map<BlockGraphics const*,std::shared_ptr<std::vector<TextureBinding> const>> textureCache;
     std::vector<std::string> geometryModels;
     std::size_t geometryCursor{};
-    std::vector<ChunkPos> loadedChunks;
-    std::size_t nextChunk{};
-    std::uint32_t cell{};
-    int minY{},maxY{};
-    std::unique_ptr<BlockTessellator> blockTess;
-    std::unique_ptr<Tessellator> tess;
 };
 std::unique_ptr<Session> gSession;
 bool wasF7{},wasF8{},wasF9{},wasMenuF8{},wasMenuF9{};
@@ -130,8 +127,6 @@ bool gameFocused(){
 void finish(bool cancelled) {
     if(!gSession)return;
     gSession->library.cancelled=cancelled;
-    auto remaining=gSession->loadedChunks.size()-gSession->nextChunk;
-    gSession->library.skippedChunks+=static_cast<std::uint32_t>(remaining);
     auto directory=gSession->library.directory;
     auto registered=gSession->library.registered;
     auto sampled=gSession->library.sampledBlocks;
@@ -152,18 +147,10 @@ void begin(LocalPlayer* player) {
     }
     auto session=std::make_unique<Session>();
     session->library.directory=gMod->getDataDir()/"export"/"1.26.51.1";
-    session->library.definitionOnly=!player;
+    // Full native state/geometry enumeration works both in the menu and in
+    // game. Never inspect ChunkSource or require loaded chunks.
+    session->library.definitionOnly=true;
     session->player=player;
-    if(player) {
-        auto& region=player->getDimensionBlockSource();
-        session->region=&region;
-        session->minY=region.getMinHeight();
-        session->maxY=region.getMaxHeight();
-        if(session->minY>=session->maxY || session->maxY-session->minY>2048){
-            log().error("Invalid world height");
-            return;
-        }
-    }
     // Use every registered permutation, not just the states present in loaded chunks.
     auto const& types=BlockTypeRegistry::get().mBlockLookupMap.get();
     // Expand registered permutations incrementally rather than blocking F8 startup.
@@ -180,36 +167,9 @@ void begin(LocalPlayer* player) {
         log().error("F8: no registered block permutations found");
         return;
     }
-    if(player){
-        auto& region=*session->region;
-        auto& source=region.getChunkSource();
-        std::set<std::pair<int,int>> positions;
-        auto collect=[&](auto const& storage){
-            for(auto const& [pos,weak]:storage)
-                if(weak.lock()&&source.getAvailableChunk(pos))
-                    positions.emplace(pos.x,pos.z);
-        };
-        if(auto* map=source.getChunkMap())collect(*map);
-        if(positions.empty())collect(source.getStorage());
-        for(auto const& [x,z]:positions)
-            session->loadedChunks.emplace_back(x,z);
-        auto service=renderBufferService();
-        if(!service.expired()){
-            session->blockTess=std::make_unique<BlockTessellator>(&region);
-            session->blockTess->mCachedGetBlock.get()=[&region](BlockPos const& pos)->Block const&{
-                return region.getBlock(pos);
-            };
-            session->tess=std::make_unique<Tessellator>(std::move(service));
-        }else{
-            session->loadedChunks.clear();
-            session->library.definitionOnly=true;
-            log().warn("F8: renderer buffer service missing; definitions only");
-        }
-    }
     gWriter.start();
-    log().info("F8 model index: block types={}, sample chunks={}, output={}",
-               session->registrationTypes.size(),session->loadedChunks.size(),
-               session->library.directory.string());
+    log().info("F8 registry-only model capture: block types={}, no chunk I/O, output={}",
+               session->registrationTypes.size(),session->library.directory.string());
     gSession=std::move(session);
 }
 void registerStates(Session& s,Clock::time_point started) {
@@ -265,6 +225,10 @@ void registerStates(Session& s,Clock::time_point started) {
             if(cached==s.textureCache.end()){
                 // Native atlas tables belong to BlockGraphics, not to individual
                 // block-state permutations. Share one immutable snapshot.
+                // BMCBL resolves face textures from its own resource-pack
+                // repository (blocks.json/terrain_texture.json). Capture only
+                // the exact native face-slot aliases; do not extract atlas
+                // pixels, runtime atlas UVs, or GPU material state.
                 auto snapshot=std::make_shared<std::vector<TextureBinding>>();
                 auto const& items=gfx->mTextureItems.get();
                 snapshot->reserve(items.size());
@@ -273,66 +237,34 @@ void registerStates(Session& s,Clock::time_point started) {
                     tex.slot=static_cast<std::uint32_t>(slot);
                     tex.defaultName=items[slot].defaultName.get();
                     tex.carriedName=items[slot].carriedName.get();
-                    auto const& atlas=items[slot].defaultItem.get();
-                    tex.atlasItem=atlas.mName.get();
-                    tex.additive=atlas.mIsAdditive;
-                    auto const& nativeUVs=atlas.mTextureUVs.get();
-                    for(std::size_t variantIndex=0;variantIndex<nativeUVs.size();++variantIndex){
-                        for(std::size_t frameIndex=0;frameIndex<nativeUVs[variantIndex].size();++frameIndex){
-                            auto const& uv=nativeUVs[variantIndex][frameIndex];
-                            TextureUVVariant variant;
-                            variant.variant=static_cast<std::uint32_t>(variantIndex);
-                            variant.frame=static_cast<std::uint32_t>(frameIndex);
-                            variant.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
-                            variant.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
-                            variant.tileWidth=uv._texSizeW;
-                            variant.tileHeight=uv._texSizeH;
-                            variant.sourceWidth=uv._sourceImageWidth;
-                            variant.sourceHeight=uv._sourceImageHeight;
-                            variant.pbrHandle=uv.mPBRTextureDataHandle;
-                            tex.variants.emplace_back(std::move(variant));
-                        }
-                    }
-                    if(!tex.variants.empty()){
-                        auto const& first=tex.variants.front();
-                        tex.atlasUv=first.atlasUv;
-                        tex.sourcePath=first.sourcePath;
-                        tex.tileWidth=first.tileWidth;
-                        tex.tileHeight=first.tileHeight;
-                        tex.sourceWidth=first.sourceWidth;
-                        tex.sourceHeight=first.sourceHeight;
-                        tex.pbrHandle=first.pbrHandle;
-                    }
-                    auto const& carried=items[slot].carriedItem.get();
-                    tex.carriedAtlasItem=carried.mName.get();
-                    tex.carriedAdditive=carried.mIsAdditive;
-                    auto const& carriedUVs=carried.mTextureUVs.get();
-                    for(std::size_t v=0;v<carriedUVs.size();++v){
-                        for(std::size_t f=0;f<carriedUVs[v].size();++f){
-                            auto const& uv=carriedUVs[v][f];
-                            TextureUVVariant mapped;
-                            mapped.variant=static_cast<std::uint32_t>(v);
-                            mapped.frame=static_cast<std::uint32_t>(f);
-                            mapped.atlasUv={uv._u0,uv._v0,uv._u1,uv._v1};
-                            mapped.sourcePath=uv.sourceFileLocation.get().mPath.get().value;
-                            mapped.tileWidth=uv._texSizeW;
-                            mapped.tileHeight=uv._texSizeH;
-                            mapped.sourceWidth=uv._sourceImageWidth;
-                            mapped.sourceHeight=uv._sourceImageHeight;
-                            mapped.pbrHandle=uv.mPBRTextureDataHandle;
-                            tex.carriedVariants.emplace_back(std::move(mapped));
-                        }
-                    }
                     snapshot->emplace_back(std::move(tex));
                 }
                 cached=s.textureCache.emplace(gfx,std::move(snapshot)).first;
             }
             entry.textures=cached->second;
-            if(!entry.textureBindings().empty())
-                entry.atlasUv=entry.textureBindings().front().atlasUv;
+            entry.nativeShape=static_cast<int>(gfx->mBlockShape);
+            auto const& visual=gfx->mVisualShape.get();
+            entry.visualBounds={visual.min.x,visual.min.y,visual.min.z,
+                                visual.max.x,visual.max.y,visual.max.z};
+            // Preserve shape information even when no safe standalone mesh
+            // recipe exists. Models without a verified box remain unresolved.
+            auto proxy=makeRegistryVisualBox(
+                visual,gfx->mBlockShape,
+                static_cast<std::uint32_t>(gfx->mRenderLayer));
+            if(proxy && !entry.air && !entry.blockEntity){
+                entry.visualBoundsAvailable=true;
+                auto key=std::make_pair(entry.visualBounds,proxy->layer);
+                auto cachedMesh=s.registryBoxCache.find(key);
+                if(cachedMesh==s.registryBoxCache.end())
+                    cachedMesh=s.registryBoxCache.emplace(
+                        key,std::make_shared<Mesh const>(std::move(*proxy))).first;
+                ModelSample sample;
+                sample.neighborhood="registry_visual_bounds";
+                sample.meshes.emplace_back(cachedMesh->second);
+                entry.samples.emplace_back(std::move(sample));
+                ++s.library.sampledBlocks;
+            }
         }
-        auto index=s.library.blocks.size();
-        s.lookup.emplace(block,index);
         s.library.blocks.emplace_back(std::move(entry));
     }
     s.library.registered=static_cast<std::uint32_t>(s.library.blocks.size());
@@ -349,41 +281,6 @@ void registerNativeGeometry(Session& s,Clock::time_point start) {
         if(it==models.end()||!it->second)continue;
         s.library.staticModels.emplace_back(StaticModel{name,serializeStaticGeometry(name,*it->second)});
     }
-}
-std::string neighborhood(BlockSource& region, BlockPos const& p) {
-    // 3x3x3 context is a SAMPLE signature, not an offline neighbor rule.
-    std::string sig;
-    for(int dy=-1;dy<=1;++dy)for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
-        if (dx==0 && dy==0 && dz==0) continue;
-        auto const& neighbor=region.getBlock(BlockPos{p.x+dx,p.y+dy,p.z+dz});
-        sig+=neighbor.getTypeName();
-        sig.push_back('#');
-        sig+=std::to_string(neighbor.getData());
-        sig.push_back(';');
-    }
-    return sig;
-}
-bool sampleBlock(Session& s,Block const& block,BlockPos const& pos) {
-    if(block.isAir())return false;
-    auto it=s.lookup.find(&block);
-    if(it==s.lookup.end())return false;
-    auto& entry=s.library.blocks[it->second];
-    if(entry.air)return false; // capture any native base geometry even for dedicated renderers
-    constexpr std::size_t MaxDynamicContexts=8;
-    if(entry.samples.size()>=(entry.dynamic?MaxDynamicContexts:1u))return false;
-    auto context=entry.dynamic?neighborhood(*s.region,pos):std::string{"live_reference"};
-    for (auto const& existing:entry.samples)
-        if(existing.neighborhood==context)return false;
-    ChunkData tmp;
-    captureMesh(*s.region,*s.blockTess,*s.tess,block,pos,0,tmp);
-    ModelSample sample;
-    sample.neighborhood=std::move(context);
-    sample.meshes=std::move(tmp.meshes);
-    sample.missing=tmp.missingMeshes;
-    if (sample.meshes.empty()) ++s.library.failedSamples;
-    entry.samples.emplace_back(std::move(sample));
-    ++s.library.sampledBlocks;
-    return true;
 }
 void advance(Session& s) {
     // Renderer reload can invalidate BlockGraphics and atlas pointers during
@@ -402,33 +299,9 @@ void advance(Session& s) {
         registerNativeGeometry(s,tickStart);
         return;
     }
-    unsigned tessellated=0;
-    auto const volume=static_cast<std::uint32_t>((s.maxY-s.minY)*256);
-    while(s.nextChunk<s.loadedChunks.size() &&
-          Clock::now()-tickStart<std::chrono::milliseconds(3)) {
-        auto cp=s.loadedChunks[s.nextChunk];
-        if(s.cell==0 && !s.region->getChunkSource().getAvailableChunk(cp)){
-            ++s.library.skippedChunks;
-            ++s.nextChunk;
-            continue;
-        }
-        for (unsigned i=0; i<512 && s.cell<volume &&
-             tessellated<2 && Clock::now()-tickStart<std::chrono::milliseconds(3); ++i) {
-            auto index=s.cell++;
-            int x=index%16,z=(index/16)%16,y=s.minY+static_cast<int>(index/256);
-            BlockPos pos{cp.x*16+x,y,cp.z*16+z};
-            auto const& block=s.region->getBlock(pos);
-            if(sampleBlock(s,block,pos)) ++tessellated;
-        }
-        if(s.cell<volume)break;
-        s.cell=0;
-        ++s.nextChunk;
-        ++s.library.visitedChunks;
-        if(s.nextChunk%16==0 || s.nextChunk==s.loadedChunks.size())
-            log().info("F8 samples: scanned {}/{} chunks",
-                       s.nextChunk,s.loadedChunks.size());
-    }
-    if(s.nextChunk==s.loadedChunks.size()) finish(false);
+    // All registered states and native static models are captured. No
+    // ChunkSource reads or world-driven mesh sampling are required.
+    finish(false);
 }
 LL_TYPE_INSTANCE_HOOK(BSCTickHook,ll::memory::HookPriority::Normal,
     LocalPlayer,&LocalPlayer::$tickWorld,void,::Tick const& tick) {
@@ -473,8 +346,7 @@ void onTick(LocalPlayer& player) {
         if(cancel&&gSession){finish(true);return;}
         if(start){log().info("F8 global model resource export requested");begin(&player);return;}
         if(!gSession)return;
-        if(gSession->player!=&player ||
-           gSession->region!=&player.getDimensionBlockSource()){
+        if(gSession->player!=&player){
             finish(true);return;
         }
         advance(*gSession);
