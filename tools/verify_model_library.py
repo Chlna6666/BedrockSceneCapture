@@ -166,7 +166,7 @@ def self_test():
             ],
             "indices":[0,1,2]
         }
-        local_raw=(json.dumps(local_mesh,separators=(",",":"))+"\\n").encode()
+        local_raw=(json.dumps(local_mesh,separators=(",",":"))+"\n").encode()
         local_hash=hashlib.sha256(local_raw).hexdigest()
         (p/"meshes"/(local_hash+".json")).write_bytes(local_raw)
         state=examples["blocks.json"]["blocks"][0]
