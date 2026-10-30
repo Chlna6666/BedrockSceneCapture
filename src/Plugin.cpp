@@ -12,7 +12,7 @@ public:
     BedrockSceneCapture():mod(*ll::mod::NativeMod::current()){}
     bool load(){
         initialize(mod);
-        mod.getLogger().info("BedrockSceneCapture loaded: client build, mod directory: {}",mod.getModDir().string());
+        mod.getLogger().info("BedrockSceneCapture 0.2.0: 1.26.51.1 client build, mod directory: {}",mod.getModDir().string());
         return true;
     }
     bool enable(){
@@ -22,8 +22,8 @@ public:
         if(!installPreview()){
             uninstallCapture();mod.getLogger().error("Could not install render hook");return false;
         }
-        mod.getLogger().info("BSC enabled: F7 wireframe, F8 capture loaded chunks, F9 cancel");
-        mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"captures").string());
+        mod.getLogger().info("BSC enabled: F7 wireframe, F8 native registry model library, F9 cancel");
+        mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"export"/"1.26.51.1").string());
         return true;
     }
     bool disable(){

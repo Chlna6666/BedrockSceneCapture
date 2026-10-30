@@ -1,55 +1,38 @@
 # BedrockSceneCapture
 
-C++ client-native **Minecraft Bedrock 26.51.x** diagnostic mod for [LeviLamina](https://github.com/LiteLDev/LeviLamina). Uses the original game BlockTessellator, BlockGraphics and Tessellator MeshData; it does not reconstruct cube models or derive UVs from texture names.
+Experimental Bedrock 1.26.51.1 client-native model catalog exporter for LeviLamina SDK 26.51.9.
 
-## Keys
+## Hotkeys
 
-| Key | Action |
-|---|---|
-| **F7** | Toggle a local **triangle-edge wireframe + vertex cross-marker** overlay, updating as the player changes block position. Uses a small 5x5x5 block region to bound frame cost. |
-| **F8** | Snapshot and export every already loaded chunk of the current dimension. |
-| **F9** | Cancel the active export. |
+- F7: Existing 5×5×5 triangle-edge / vertex overlay. Full chunk-cached preview is not yet implemented.
+- F8: Enumerate all registered block-state permutations and sample native world geometry from loaded chunks.
+- F9: Cancel in-progress F8 (writes an explicitly partial index).
 
-F7 is an **overlay**, not a GPU rasterizer-wide polygon-mode override. Vanilla terrain materials remain underneath; only the added triangle edges and vertex markers are rendered without texture mapping. This avoids unsafe modification of the game's render pipeline. The preview intentionally excludes blocks rendered only by dedicated block entity / fluid renderers.
+## Output
 
-### Export
+Inside LeviLamina mod data directory, under BedrockSceneCapture/export/1.26.51.1/:
 
-Outputs to the LeviLamina mod data directory: `BedrockSceneCapture/captures/capture_<unix_millis>/`.
+- manifest.json: target version, counts, resource-pack fingerprint null until implemented, no claim of complete export.
+- blocks.json: every registered state, NBT (hex), native IDs, atlas UV hints and sampled neighbor-context model references.
+- meshes/<sha256>.json: deduplicated native position/normal/UV/ABGR and triangle indices.
+- materials.json: observed native layer numbers and external atlas references.
+- entities.json: explicit unsupported geometry/skeleton/animation state.
+- coverage.json: complete/dynamic/partial/unsupported status per state with reasons.
 
-Each `chunk_X_Z.bsc` is a little-endian `BSC1` file:
-- 4-byte magic, u32 version (1), i32 chunk X/Z, i32 minY/maxY (exclusive)
-- u32 palette count, cell count, mesh count, missing mesh count
-- palette entries: u32 length + UTF-8 ID; u32 length + **native little-endian binary serialization BlockState NBT**; network ID (u32), legacy data (u16), first atlas UV rectangle (4x f32)
-- cells: u16 palette indices in Y/Z/X order
-- meshes: u32 cell index, render layer, primitive mode, vertex count, index count; each vertex has 8 f32 (XYZ, normal XYZ, UV) + u32 native ABGR; followed by u32 index values
-- `capture.json` includes chunk-count summary, not a guarantee that disk writes succeeded (look for filesystem failures in debug logs).
+textures/ is deliberately not exported. Resolve texture assets against locally installed resource packs and matching game version.
 
-Mesh positions are relative to their block; UVs are from the native terrain atlas (the atlas pixels themselves are **not yet exported**). Missing geometry is tracked rather than replaced by fabricated cubes. The base format also does not include dedicated block entities, dynamic entity meshes, PBR textures or reliable per-face atlas asset names.
+## Correctness
 
-**Safety/performance:** Uses available loaded chunks only, never generates new chunks, caps game-thread scan at ~3 ms and 512 cells per tick, performs I/O on a separate thread (max 2 pending chunks), and discards native pointers when the world/player changes. An F8 snapshot processes loaded chunks progressively; blocks may change while a large scan is in progress, so it is **not atomic**.
+F8 does not serialize chunk cells or write any .bsc files. Registry coverage is distinct from native mesh sample coverage. Native meshes for unobserved states are absent, not reconstructed as cubes. Dynamic neighbor-dependent shapes have at most 8 observed 3x3x3 context signatures; these samples are not executable offline tessellation rules. Dedicated block-entity rendering, fluids, skeletal entity models and material blend recipes require subsequent implementation. They are not advertised as complete. Only air is marked complete. Material IDs and atlas UVs require additional asset resolution. Resource pack fingerprint is currently unavailable. Every capture overwrites the version-scoped index while old content-addressed mesh files may remain unreferenced.
 
-## Loader status and troubleshooting
-
-The mod must appear in **LeviLamina's** load **and enable** log, not merely in BLoader's DLL enumeration. Expected messages include
-`BedrockSceneCapture loaded: client build`, `BSC enabled: F7 wireframe` and, after entering a world, `BSC local-player tick hook active`.
-On F8, `F8 capture requested` should appear and the full output directory is logged.
-
-For a client build, `mods/BedrockSceneCapture/manifest.json` **must** have `"platform": "client"`.
-An unexpanded `${modPlatform}` placeholder causes LeviLamina to reject the mod entirely even if BLoader says its DLL was loaded;
-then neither F7 nor F8 can work. Always install the newly built DLL **and manifest.json** together, replacing the old package.
-The GitHub Actions build now verifies the packaged manifest, DLL, and the exported `ll_memory_operator_overrided` symbol as hard failures before uploading the artifact. LeviLamina requires the official C++ allocation operators; a native DLL without them is rejected before mod callbacks run.
+Capture work is rate-limited on the game thread to approximately 3 ms per tick and 2 tessellations per tick; SHA-256 and JSON I/O run on a worker thread. A scan of live loaded chunks is not atomic.
 
 ## Build
 
-GitHub Actions builds automatically after every push to `main`, PR and manual dispatch, targeting Windows x64 with LLVM 22, xmake, and LeviLamina 26.51.9 client SDK. The dependency remains within game version `26.51.x`. Download the `BedrockSceneCapture-26.51.x-windows-x64` artifact from Actions.
+Build with LLVM 22, xmake and LeviLamina 26.51.9 client SDK.
 
-Local Windows build:
+    xmake repo -u
+    xmake f -a x64 -p windows -m release -y
+    xmake -y -v
 
-```powershell
-xmake repo -u
-xmake f -a x64 -p windows -m release -y
-xmake -y -v
-python tools/inspect.py --self-test
-```
-
-This project is experimental. CI compilation and in-game validation of mesh submission, render thread safety, and world transition need to pass before considering it stable. For reference, [LHolo](https://github.com/MarmieQi/LHolo) uses the same game-native tessellator and a similar render hook (its GPL license applies to copied code; this repository's independent code is released under its own LICENSE).
+GitHub Actions verifies the packaged client manifest and LeviLamina allocator export. In-game hook correctness and completeness remain to be tested.
