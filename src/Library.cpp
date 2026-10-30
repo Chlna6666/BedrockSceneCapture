@@ -402,16 +402,25 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             switch(layer){
             case 0:className="double_sided";doubleSided=true;break;
             case 1:case 2:className="water";break;
-            case 3:case 4:className="blend";break;
+            case 3:className="blend";break;
+            case 4:className="blend_to_opaque";break;
             case 5:className="opaque";break;
             case 6:className="light_source";break;
-            case 7:case 8:case 9:case 10:case 11:case 12:
-            case 18:case 19:case 20:case 21:className="alpha_test";alphaTest=true;break;
+            case 7:className="alpha_test_to_opaque";alphaTest=true;break;
+            case 8:className="alpha_test";alphaTest=true;break;
+            case 9:className="seasons_opaque";break;
+            case 10:className="seasons_alpha_test_to_opaque";alphaTest=true;break;
+            case 11:className="alpha_test_single_side";alphaTest=true;break;
+            case 12:className="alpha_test_single_side_to_opaque";alphaTest=true;break;
             case 13:className="end_portal";break;
             case 14:className="barrier";break;
             case 15:className="light";break;
             case 16:className="structure_void";break;
-            case 17:className="opaque";break;
+            case 17:className="shift_opaque";break;
+            case 18:className="shift_alpha_test_to_opaque";alphaTest=true;break;
+            case 19:className="shift_alpha_test";alphaTest=true;break;
+            case 20:className="shift_alpha_test_single_side";alphaTest=true;break;
+            case 21:className="shift_alpha_test_single_side_to_opaque";alphaTest=true;break;
             default:break;
             }
             materials << "{\"id\":\"terrain/layer_" << layer

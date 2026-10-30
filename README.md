@@ -45,3 +45,5 @@ Windows 的实际原生 C++ 编译必须在带有 LeviLamina 26.51.9 client SDK 
 Dedicated block-actor renderer classification now uses the native `BlockActorType` enum instead of substring tests (which could previously misidentify `minecraft:bedrock` as a bed). States of chests, signs, beds, banners and related block actors are still flagged unsupported for complete offline display, but their **available base block geometry** can now be sampled without claiming their dedicated renderer was captured. The block-actor type ID is exported for offline dispatch.
 
 Registry states are expanded a block type at a time within the frame budget instead of all at F8 startup. A single native type callback may still take longer than the budget; disk serialization remains off-thread.
+
+SDK type safety: main-menu F8 unwraps `gsl::not_null<Bedrock::NonOwnerPointer<IClientInstance>>` before querying the local player. The static model catalog retains `texture_stack` and ordered `face_index`. Render-class identifiers follow the native `BlockRenderLayer` enum; alpha/PBR shader-state details remain explicitly unverified.

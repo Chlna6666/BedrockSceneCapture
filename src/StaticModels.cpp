@@ -51,6 +51,13 @@ std::string serializeStaticGeometry(std::string const& name,BlockGeometry::Model
         first=false;
         o<<jsonString(texture);
     }
+    o << "],\"texture_stack\":[";
+    first=true;
+    for(auto const& texture:model.mTextureStack.get()){
+        if(!first)o<<',';
+        first=false;
+        o<<jsonString(texture);
+    }
     o << "],\"elements\":[";
     first=true;
     for(auto const& element:model.mElements.get()){
@@ -73,10 +80,12 @@ std::string serializeStaticGeometry(std::string const& name,BlockGeometry::Model
               << ",\"size\":[" << size.x << ',' << size.y << ',' << size.z << ']'
               << ",\"faces\":[";
             bool firstFace=true;
+            std::size_t faceIndex=0;
             for(auto const& face:box.mFaces.get()){
                 if(!firstFace)o<<',';
                 firstFace=false;
-                o << "{\"enabled\":" << (face.enabled?"true":"false")
+                o << "{\"face_index\":" << faceIndex++
+                  << ",\"enabled\":" << (face.enabled?"true":"false")
                   << ",\"uv\":[" << face.u0 << ',' << face.v0
                   << ',' << face.u1 << ',' << face.v1 << ']'
                   << ",\"rotation\":" << face.rotation

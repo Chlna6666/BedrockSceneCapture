@@ -194,7 +194,7 @@ void begin(LocalPlayer* player) {
         }
     }
     gWriter.start();
-    log().info("F8 model index: states={}, sample chunks={}, output={}",
+    log().info("F8 model index: block types={}, sample chunks={}, output={}",
                session->registrationTypes.size(),session->loadedChunks.size(),
                session->library.directory.string());
     gSession=std::move(session);
@@ -435,10 +435,14 @@ void onTick(LocalPlayer& player) {
 }
 void onMenuUpdate(MinecraftGame& game){
     if(!gMod)return;
-    if(game.isPrimaryClientInstanceReady() &&
-       game.getPrimaryClientInstance()->getLocalPlayer()!=nullptr){
-        wasMenuF8=false;wasMenuF9=false;
-        return;
+    if(game.isPrimaryClientInstanceReady()){
+        // gsl::not_null wraps a Bedrock::NonOwnerPointer. Its first ->
+        // targets NonOwnerPointer itself, not IClientInstance.
+        auto* client=game.getPrimaryClientInstance().get().get();
+        if(client && client->getLocalPlayer()){
+            wasMenuF8=false;wasMenuF9=false;
+            return;
+        }
     }
     bool focus=gameFocused();
     bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);
