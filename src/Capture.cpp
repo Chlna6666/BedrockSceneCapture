@@ -211,6 +211,12 @@ void finish(bool cancelled) {
                sceneStatus.acceptedCalls,sceneStatus.distinctBlockStates,
                sceneStatus.distinctShapes,sceneStatus.rejectedQuota,
                sceneStatus.rejectedDuplicate,sceneStatus.rejectedLockBusy);
+    gSession->library.nativeCounters={
+        sceneStatus.tessellatorCalls,sceneStatus.eligibleCalls,
+        sceneStatus.acceptedCalls,sceneStatus.rejectedQuota,
+        sceneStatus.rejectedDuplicate,sceneStatus.rejectedLockBusy,
+        sceneStatus.distinctBlockStates,sceneStatus.distinctShapes
+    };
     auto actorStatus=actorCaptureDiagnostics();
     log().info("F8 BlockActor hooks: chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
                actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],

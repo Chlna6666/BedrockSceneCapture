@@ -72,6 +72,11 @@ struct BlockResource {
         return textures ? *textures : empty;
     }
 };
+struct NativeCaptureCounters {
+    std::uint64_t tessellatorCalls{},eligibleCalls{},acceptedCalls{};
+    std::uint64_t rejectedQuota{},rejectedDuplicate{},rejectedLockBusy{};
+    std::uint64_t distinctBlockStates{},distinctShapes{};
+};
 struct LibraryData {
     std::filesystem::path directory;
     std::vector<BlockResource> blocks;
@@ -81,6 +86,7 @@ struct LibraryData {
     std::uint32_t sampledBlocks{}, failedSamples{};
     bool cancelled{};
     bool definitionOnly{};
+    NativeCaptureCounters nativeCounters{};
 };
 bool saveLibrary(LibraryData const&, std::string& error);
 std::string hexBytes(std::string const&);

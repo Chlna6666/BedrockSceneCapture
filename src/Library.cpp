@@ -750,6 +750,16 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"loaded_chunks_skipped\":" << data.skippedChunks
                  << ",\"sampled_blocks\":" << data.sampledBlocks
                  << ",\"failed_samples\":" << data.failedSamples + writeFailures
+                 << ",\"native_capture_counters\":{"
+                 << "\"tessellator_calls\":" << data.nativeCounters.tessellatorCalls
+                 << ",\"eligible\":" << data.nativeCounters.eligibleCalls
+                 << ",\"accepted\":" << data.nativeCounters.acceptedCalls
+                 << ",\"quota_rejected\":" << data.nativeCounters.rejectedQuota
+                 << ",\"duplicate_rejected\":" << data.nativeCounters.rejectedDuplicate
+                 << ",\"lock_busy_rejected\":" << data.nativeCounters.rejectedLockBusy
+                 << ",\"distinct_block_states\":" << data.nativeCounters.distinctBlockStates
+                 << ",\"distinct_shapes\":" << data.nativeCounters.distinctShapes << '}'
+                 << ",\"capture_cycle_finished\":" << (!data.cancelled?"true":"false")
                  << ",\"registry_only\":true,\"passive_world_observation\":" << (!data.definitionOnly?"true":"false")
                   << ",\"captured_block_actor_models\":" << data.actorModels.size()
                   << ",\"definitions_only\":" << (data.definitionOnly?"true":"false")
