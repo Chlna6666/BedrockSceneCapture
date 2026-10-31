@@ -29,6 +29,8 @@ def validate(root: Path):
     pool_index=None
     geometry_cache={}
     appearance_cache={}
+    material_cache={}
+    seen_materials=set()
     seen_geometries=set()
     seen_appearances=set()
     if shared_version is not None:
@@ -42,7 +44,8 @@ def validate(root: Path):
         if pool_index.get("schema")!=2 or pool_index.get("legacy_meshes_retained") is not True:
             errors.append("invalid shared geometry pool index")
     def load_shared(kind,digest):
-        cache=geometry_cache if kind=="geometry" else appearance_cache
+        cache={"geometry":geometry_cache,"appearance":appearance_cache,
+               "materials":material_cache}[kind]
         if not isinstance(digest,str) or HASH_RE.fullmatch(digest) is None:
             errors.append(f"invalid shared {kind} hash")
             return None
@@ -64,6 +67,17 @@ def validate(root: Path):
         if isinstance(b.get("network_id"),int) and not isinstance(b.get("network_id"),bool)
     }
     for b in states:
+        if shared_version==2 and manifest.get("shared_material_count") is not None:
+            material_ref=b.get("shared_material_ref")
+            if b.get("geometry_alias_network_id") is not None:
+                if material_ref is not None:
+                    errors.append("geometry alias unexpectedly duplicates material pool entry")
+            else:
+                material=load_shared("materials",material_ref)
+                if material is not None:
+                    seen_materials.add(material_ref)
+                    if material.get("schema")!=2 or material.get("texture_bindings")!=b.get("texture_bindings",[]):
+                        errors.append("shared material bindings differ from state")
         status=b.get("status")
         if status not in counts:errors.append("invalid coverage status")
         else:counts[status]+=1
@@ -282,6 +296,11 @@ def validate(root: Path):
             errors.append("shared geometry count mismatch")
         if manifest.get("shared_appearance_count")!=len(seen_appearances):
             errors.append("shared appearance count mismatch")
+        if manifest.get("shared_material_count") is not None and (
+            manifest.get("shared_material_count")!=len(seen_materials) or
+            set(pool_index.get("materials",[]))!=seen_materials
+        ):
+            errors.append("shared material pool count/index mismatch")
         if pool_index is not None and (
             set(pool_index.get("geometry",[]))!=seen_geometries or
             set(pool_index.get("appearance",[]))!=seen_appearances
@@ -386,14 +405,23 @@ def self_test():
         adir.mkdir(parents=True)
         (gdir/(ghash+".json")).write_bytes(raw_geom)
         (adir/(ahash+".json")).write_bytes(raw_appearance)
+        material={"schema":2,"texture_bindings":state["texture_bindings"]}
+        raw_material=(json.dumps(material,separators=(",",":"))+"\\n").encode()
+        mhash=hashlib.sha256(raw_material).hexdigest()
+        mdir=p/"geometry_pool"/"materials"
+        mdir.mkdir(parents=True)
+        (mdir/(mhash+".json")).write_bytes(raw_material)
+        state["shared_material_ref"]=mhash
         examples["manifest.json"].update({
             "shared_geometry_pool_schema":2,"shared_geometry_count":1,
-            "shared_appearance_count":1,"legacy_meshes_retained":True})
+            "shared_appearance_count":1,"shared_material_count":1,
+            "legacy_meshes_retained":True})
         variant["shared_geometry_refs"]=[ghash]
         variant["shared_appearance_refs"]=[ahash]
         (p/"geometry_pool.json").write_text(json.dumps({
             "schema":2,"legacy_meshes_retained":True,
-            "geometry":[ghash],"appearance":[ahash]}),encoding="utf-8")
+            "geometry":[ghash],"appearance":[ahash],
+            "materials":[mhash]}),encoding="utf-8")
         for name in ("blocks.json","manifest.json"):
             (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
         assert validate(p)["valid"],"shared geometry pool v2 fixture invalid"
@@ -407,8 +435,9 @@ def self_test():
         (adir/(ahash+".json")).write_bytes(raw_appearance)
         variant.pop("shared_geometry_refs")
         variant.pop("shared_appearance_refs")
+        state.pop("shared_material_ref")
         for k in ("shared_geometry_pool_schema","shared_geometry_count",
-                  "shared_appearance_count","legacy_meshes_retained"):
+                  "shared_appearance_count","shared_material_count","legacy_meshes_retained"):
             examples["manifest.json"].pop(k)
         for name in ("blocks.json","manifest.json"):
             (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
