@@ -107,7 +107,7 @@ std::string modelJson(Model const& model,
     o<<"{\"schema\":1,\"source\":\"native_block_actor_model_parts\","
      "\"coordinate_space\":\"model_local\",\"animation_pose\":\"not_captured\",\"parts\":[";
     bool firstPart=true;
-    std::size_t cubes=0;
+    std::size_t cubes=0,polyFaces=0,unresolvedCubes=0;
     for(std::size_t index=0;index<parts.size();++index){
         auto const* part=parts[index];
         if(!part)continue;
@@ -129,7 +129,10 @@ std::string modelJson(Model const& model,
             // Some 1.26.51.1 renderers hold compiled Cube polygons but expose
             // zero mSize through this SDK. Never serialize them as real boxes.
             if(!std::isfinite(size.x)||!std::isfinite(size.y)||!std::isfinite(size.z) ||
-               size.x==0.f||size.y==0.f||size.z==0.f)continue;
+               size.x==0.f||size.y==0.f||size.z==0.f){
+                ++unresolvedCubes;
+                continue;
+            }
             if(!firstCube)o<<',';
             firstCube=false;
             ++cubes;
@@ -152,10 +155,72 @@ std::string modelJson(Model const& model,
             }
             o<<"]}";
         }
-        o<<"]}";
+        o<<"]";
+        // Some data-driven BlockActors use an indexed polygon mesh rather
+        // than procedural Cubes. Preserve the original vertex/normal/UV
+        // indices and topology instead of approximating it with a box.
+        auto const& poly=part->mPolyMesh.get();
+        auto const& positions=poly.mPositions.get();
+        auto const& normals=poly.mNormals.get();
+        auto const& uvs=poly.mUVs.get();
+        auto const& tris=poly.mTris.get();
+        auto const& quads=poly.mQuads.get();
+        bool valid=!positions.empty() && positions.size()<=65536 &&
+                   normals.size()<=65536 && uvs.size()<=65536 &&
+                   tris.size()+quads.size()<=65536;
+        auto validVertex=[&](Geometry::NodeVertex const& v){
+            return v.mPositionIndex.get()<positions.size() &&
+                   (normals.empty()||v.mNormalIndex.get()<normals.size()) &&
+                   (uvs.empty()||v.mUVIndex.get()<uvs.size());
+        };
+        if(valid){
+            for(auto const& tri:tris)for(auto const& v:tri)
+                if(!validVertex(v))valid=false;
+            for(auto const& quad:quads)for(auto const& v:quad)
+                if(!validVertex(v))valid=false;
+        }
+        if(valid && (!tris.empty()||!quads.empty())){
+            polyFaces+=tris.size()+quads.size();
+            o<<",\"poly_mesh\":{\"positions\":[";
+            for(std::size_t i=0;i<positions.size();++i){
+                if(i)o<<',';
+                vec3(o,positions[i]);
+            }
+            o<<"],\"normals\":[";
+            for(std::size_t i=0;i<normals.size();++i){
+                if(i)o<<',';
+                vec3(o,normals[i]);
+            }
+            o<<"],\"uvs\":[";
+            for(std::size_t i=0;i<uvs.size();++i){
+                if(i)o<<',';
+                vec2(o,uvs[i]);
+            }
+            o<<"],\"uv_normalized\":"<<(poly.mAreUVsNormalized.get()?"true":"false");
+            auto writeFaces=[&](auto const& faces){
+                o<<'[';
+                for(std::size_t i=0;i<faces.size();++i){
+                    if(i)o<<',';
+                    o<<'[';
+                    for(std::size_t j=0;j<faces[i].size();++j){
+                        if(j)o<<',';
+                        auto const& v=faces[i][j];
+                        o<<'['<<v.mPositionIndex.get()<<','
+                         <<v.mNormalIndex.get()<<','<<v.mUVIndex.get()<<']';
+                    }
+                    o<<']';
+                }
+                o<<']';
+            };
+            o<<",\"triangles\":";writeFaces(tris);
+            o<<",\"quads\":";writeFaces(quads);
+            o<<'}';
+        }
+        o<<"}";
     }
-    o<<"]}\n";
-    return cubes?o.str():std::string{};
+    o<<"],\"unresolved_compiled_cubes\":"<<unresolvedCubes
+     <<",\"geometry_complete\":"<<(unresolvedCubes==0?"true":"false")<<"}\n";
+    return cubes||polyFaces?o.str():std::string{};
 }
 void recordActor(char const* label,Model const& model,
                  std::initializer_list<ModelPart const*> explicitParts){
