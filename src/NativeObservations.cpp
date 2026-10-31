@@ -309,7 +309,7 @@ void recordActor(char const* label,Model const& model,
     // later complete live-renderer snapshot.
     auto existing=actorModels.find(label);
     if(existing!=actorModels.end() &&
-       existing->second.find("\"geometry_complete\":true")
+       existing->second.find("\"geometry_complete\":true")!=std::string::npos)
         return;
     // Retry incomplete/empty models at most once a second.
     auto const now=std::chrono::steady_clock::now();
@@ -321,7 +321,7 @@ void recordActor(char const* label,Model const& model,
     if(existing!=actorModels.end()){
         // Only replace an incomplete snapshot with one whose native CPU
         // boxes, polygon mesh and source UVs have all been resolved.
-        if(json.find("\"geometry_complete\":true")return;
+        if(json.find("\"geometry_complete\":true")==std::string::npos)return;
         existing->second=std::move(json);
     }else{
         actorModels.emplace(label,std::move(json));
