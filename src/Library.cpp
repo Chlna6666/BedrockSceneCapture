@@ -308,6 +308,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::filesystem::create_directories(data.directory / "meshes");
         std::filesystem::create_directories(data.directory / "geometry_pool" / "geometry");
         std::filesystem::create_directories(data.directory / "geometry_pool" / "appearance");
+        std::filesystem::create_directories(data.directory / "geometry_pool" / "materials");
         // Invalidate any manifest from an earlier run before rewriting the
         // version-scoped indexes. If this export crashes or I/O fails,
         // a stale manifest must not advertise old results as current.
@@ -325,6 +326,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::set<std::string> uniqueShapeHashes;
         std::set<std::string> uniqueExactGeometries;
         std::set<std::string> uniqueAppearances;
+        std::set<std::string> uniqueMaterials;
+        std::map<std::vector<TextureBinding> const*,std::string> materialTableRefs;
         std::map<Mesh const*,SharedMeshEncoding> canonicalGeometryCache;
         std::map<Mesh const*,std::string> canonicalGeometryRefs;
         std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,std::string> canonicalAppearanceRefs;
@@ -475,7 +478,18 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     cached=memoizedTextureTables.emplace(key,textureStream.str()).first;
                 }
                 blocks<<cached->second;
+                auto materialIt=materialTableRefs.find(key);
+                if(materialIt==materialTableRefs.end()){
+                    std::string content="{\"schema\":2,\"texture_bindings\":"
+                                      +cached->second+"}\n";
+                    auto hash=sha256(content);
+                    if(uniqueMaterials.insert(hash).second)
+                        atomicFile(data.directory/"geometry_pool"/"materials"/(hash+".json"),content);
+                    materialIt=materialTableRefs.emplace(key,std::move(hash)).first;
+                }
+                blocks << ",\"shared_material_ref\":" << quoted(materialIt->second);
             }
+            if(block.hasGeometryAlias)blocks << ",\"shared_material_ref\":null";
             blocks << ",\"variants\":[";
             bool firstVariant=true;
             for (auto const& sample : block.samples) {
@@ -639,6 +653,13 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             firstShared=false;
             sharedIndex<<quoted(hash);
         }
+        sharedIndex<<"],\"materials\":[";
+        firstShared=true;
+        for(auto const& hash:uniqueMaterials){
+            if(!firstShared)sharedIndex<<',';
+            firstShared=false;
+            sharedIndex<<quoted(hash);
+        }
         sharedIndex<<"]}\n";
         std::ostringstream modelIndex;
         modelIndex << "{\"schema\":1,\"source\":\"native_block_geometry_registry\","
@@ -734,6 +755,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"shared_geometry_pool_schema\":2"
                  << ",\"shared_geometry_count\":" << uniqueExactGeometries.size()
                  << ",\"shared_appearance_count\":" << uniqueAppearances.size()
+                 << ",\"shared_material_count\":" << uniqueMaterials.size()
                  << ",\"legacy_meshes_retained\":true"
                  << ",\"static_geometry_models\":" << staticModelIndex.size()
                  << ",\"unresolved_texture_triangles\":" << unmatchedFaces
