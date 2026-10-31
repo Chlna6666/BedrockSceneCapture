@@ -634,7 +634,11 @@ void onTick(LocalPlayer& player) {
             log().info("F7: installing overlay render hook on demand");
             if(!installPreview(*gMod))
                 log().error("F7: overlay render hook installation failed");
-            else gPreviewEnabled.store(true);
+            else {
+                gPreviewEnabled.store(true);
+                if(!installActorWireframeObservations(*gMod))
+                    log().warn("F7: BlockEntity model-part hook unavailable; ordinary block wireframe remains usable");
+            }
         }else gPreviewEnabled.store(false);
         log().info("F7 triangle and vertex debug view {}",
                    gPreviewEnabled.load()?"on":"off");

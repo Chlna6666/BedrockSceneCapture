@@ -1,6 +1,7 @@
 #include "NativeObservations.h"
 #include "NativeCoordinates.h"
 #include "Preview.h"
+#include "ActorWireframe.h"
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
 #include "mc/client/renderer/Tessellator.h"
@@ -646,6 +647,7 @@ LL_TYPE_INSTANCE_HOOK(BSCNativeBlockHook,ll::memory::HookPriority::Normal,
 LL_TYPE_INSTANCE_HOOK(BSCChestModelHook,ll::memory::HookPriority::Normal,
     ChestRenderer,&ChestRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
+    ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& small=this->mChestModel.get();
     auto const& large=this->mLargeChestModel.get();
@@ -657,6 +659,7 @@ LL_TYPE_INSTANCE_HOOK(BSCChestModelHook,ll::memory::HookPriority::Normal,
 LL_TYPE_INSTANCE_HOOK(BSCSignModelHook,ll::memory::HookPriority::Normal,
     SignRenderer,&SignRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
+    ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& model=this->mSignModel.get();
     recordActor("standing_sign",model,{&model.mCube.get(),&model.mCube2.get()});
@@ -664,6 +667,7 @@ LL_TYPE_INSTANCE_HOOK(BSCSignModelHook,ll::memory::HookPriority::Normal,
 LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
     HangingSignRenderer,&HangingSignRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
+    ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& model=this->mHangingSignModel.get();
     recordActor("hanging_sign",model,
@@ -674,6 +678,7 @@ LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
 LL_TYPE_INSTANCE_HOOK(BSCBedModelHook,ll::memory::HookPriority::Normal,
     BedRenderer,&BedRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
+    ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& model=this->mBed.get();
     recordActor("bed",model,{&model.mBody.get(),&model.mLeg0.get(),
@@ -682,6 +687,7 @@ LL_TYPE_INSTANCE_HOOK(BSCBedModelHook,ll::memory::HookPriority::Normal,
 LL_TYPE_INSTANCE_HOOK(BSCShulkerModelHook,ll::memory::HookPriority::Normal,
     ShulkerBoxRenderer,&ShulkerBoxRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
+    ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& model=this->mShulkerBoxModel.get();
     recordActor("shulker_box",model,{&model.mLid.get(),&model.mBase.get()});
@@ -689,6 +695,7 @@ LL_TYPE_INSTANCE_HOOK(BSCShulkerModelHook,ll::memory::HookPriority::Normal,
 LL_TYPE_INSTANCE_HOOK(BSCBellModelHook,ll::memory::HookPriority::Normal,
     BellBlockActorRenderer,&BellBlockActorRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
+    ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& model=this->mBell.get();
     recordActor("bell",model,{&model.mBellBody.get(),&model.mBellBase.get()});
@@ -696,6 +703,7 @@ LL_TYPE_INSTANCE_HOOK(BSCBellModelHook,ll::memory::HookPriority::Normal,
 LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
     PistonBlockActorRenderer,&PistonBlockActorRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
+    ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& model=this->mPistonArm.get();
     recordActor("piston_arm",model,{
@@ -706,23 +714,15 @@ bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
      installedBed{},installedShulker{},installedBell{},installedPiston{};
 }
-bool installNativeObservations(ll::mod::NativeMod& mod){
-    // Run only on an explicit in-world F8 request, never under mod enable.
-    // Log BEFORE each symbol resolution / patch so a stuck hook can be
-    // identified from the last durable message.
-    if(installedWorld)return true;
+void installActorRenderHooks(ll::mod::NativeMod& mod){
     auto& logger=mod.getLogger();
     auto install=[&](char const* label,bool& installed,auto patch){
-        logger.info("F8 native hook install BEGIN: {}",label);
+        if(installed)return;
+        logger.info("BlockEntity hook BEGIN: {}",label);
         installed=(patch()==0);
-        if(installed)logger.info("F8 native hook install OK: {}",label);
-        else logger.warn("F8 native hook install FAILED: {}",label);
+        if(installed)logger.info("BlockEntity hook OK: {}",label);
+        else logger.warn("BlockEntity hook FAILED: {}",label);
     };
-    // Core tessellation hook is installed first. Optional ModelPart hooks
-    // are last: they are the most invasive and were previously installed
-    // synchronously in LeviLamina's startup path.
-    install("BlockTessellator::tessellateInWorld",installedWorld,
-        []{return BSCNativeBlockHook::hook();});
     install("ChestRenderer::render",installedChest,
         []{return BSCChestModelHook::hook();});
     install("SignRenderer::render",installedSign,
@@ -737,6 +737,24 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         []{return BSCBellModelHook::hook();});
     install("PistonBlockActorRenderer::render",installedPiston,
         []{return BSCPistonArmModelHook::hook();});
+}
+bool installActorWireframeObservations(ll::mod::NativeMod& mod){
+    installActorRenderHooks(mod);
+    return installActorWireframePartHook(mod);
+}
+bool installNativeObservations(ll::mod::NativeMod& mod){
+    if(installedWorld)return true;
+    auto& logger=mod.getLogger();
+    auto install=[&](char const* label,bool& installed,auto patch){
+        if(installed)return;
+        logger.info("F8 native hook install BEGIN: {}",label);
+        installed=(patch()==0);
+        if(installed)logger.info("F8 native hook install OK: {}",label);
+        else logger.warn("F8 native hook install FAILED: {}",label);
+    };
+    install("BlockTessellator::tessellateInWorld",installedWorld,
+        []{return BSCNativeBlockHook::hook();});
+    installActorRenderHooks(mod);
     install("ModelPart::addBox",installedPartAdd,
         []{return BSCPartAddBoxHook::hook();});
     install("ModelPart::loadBoxes",installedPartLoad,
@@ -890,6 +908,7 @@ std::vector<ActorModelSnapshot> takeActorModels(){
     return out;
 }
 void uninstallNativeObservations(){
+    uninstallActorWireframePartHook();
     armed.store(false,std::memory_order_release);
     if(installedPartCompile){BSCPartCompileCubesHook::unhook();installedPartCompile=false;}
     if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}

@@ -14,6 +14,7 @@
 #include "mc/deps/core/math/Matrix.h"
 #include "mc/deps/core/math/Vec3.h"
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <array>
 #include <atomic>
