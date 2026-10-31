@@ -31,6 +31,7 @@
 #include "mc/client/renderer/blockactor/LecternRenderer.h"
 #include "mc/client/renderer/blockactor/EnchantingTableRenderer.h"
 #include "mc/client/renderer/blockactor/BeaconRenderer.h"
+#include "mc/client/renderer/blockactor/SerializedActorRenderer.h"
 #include <atomic>
 #include <array>
 #include <algorithm>
@@ -755,11 +756,20 @@ LL_TYPE_INSTANCE_HOOK(BSCBeaconWireHook,ll::memory::HookPriority::Normal,
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
 }
+// Covers all serialized actor-like BlockEntity models (including copper
+// golem statues) via the shared base renderer, not by assuming their visual
+// model can be recovered from the ordinary BlockTessellator.
+LL_TYPE_INSTANCE_HOOK(BSCSerializedActorWireHook,ll::memory::HookPriority::Normal,
+    SerializedActorRenderer,&SerializedActorRenderer::$render,void,
+    BaseActorRenderContext& ctx,BlockActorRenderData& data){
+    ActorWireframeScope scope{ctx,data};
+    origin(ctx,data);
+}
 bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
      installedBed{},installedShulker{},installedBell{},installedPiston{},
      installedBanner{},installedPot{},installedConduit{},installedLectern{},
-     installedEnchanting{},installedBeacon{};
+     installedEnchanting{},installedBeacon{},installedSerialized{};
 }
 void installActorRenderHooks(ll::mod::NativeMod& mod){
     auto& logger=mod.getLogger();
@@ -796,6 +806,8 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
         []{return BSCEnchantingBookWireHook::hook();});
     install("BeaconRenderer::render",installedBeacon,
         []{return BSCBeaconWireHook::hook();});
+    install("SerializedActorRenderer::render",installedSerialized,
+        []{return BSCSerializedActorWireHook::hook();});
 }
 bool installActorWireframeObservations(ll::mod::NativeMod& mod){
     // The old BlockActorRenderData constructor hook executed millions of
@@ -981,6 +993,7 @@ void uninstallNativeObservations(){
     if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}
     if(installedPartAdd){BSCPartAddBoxHook::unhook();installedPartAdd=false;}
     {std::lock_guard lock(sourceBoxesMutex);sourceBoxes.clear();}
+    if(installedSerialized){BSCSerializedActorWireHook::unhook();installedSerialized=false;}
     if(installedEnchanting){BSCEnchantingBookWireHook::unhook();installedEnchanting=false;}
     if(installedBeacon){BSCBeaconWireHook::unhook();installedBeacon=false;}
     if(installedLectern){BSCLecternWireHook::unhook();installedLectern=false;}
