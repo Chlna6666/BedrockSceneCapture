@@ -783,7 +783,11 @@ bool installActorWireframeObservations(ll::mod::NativeMod& mod){
     // Renderer-specific thunks remain a fallback for runtime builds where
     // the data constructor is inlined, bypassed or cannot be patched.
     bool const universal=installUniversalActorDataHook(mod);
-    if(!universal)installActorRenderHooks(mod);
+    // A hook may install successfully yet not execute if the engine uses a
+    // different/inlined constructor path. Keep the renderer-specific scopes
+    // as a runtime fallback for all supported families, without double
+    // collecting geometry (nested scopes flush once at the outer boundary).
+    installActorRenderHooks(mod);
     bool const parts=installActorWireframePartHook(mod);
     return parts && (universal || installedChest || installedSign ||
                      installedHanging || installedBed || installedShulker ||
