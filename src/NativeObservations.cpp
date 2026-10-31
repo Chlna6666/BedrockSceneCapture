@@ -349,7 +349,7 @@ LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
     HangingSignRenderer,&HangingSignRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     origin(ctx,data);
-    auto const& model=this->mSignModel.get();
+    auto const& model=this->mHangingSignModel.get();
     recordActor("hanging_sign",model,
         {&model.mPlank.get(),&model.mBoard.get(),&model.mVChain.get(),
          &model.mChainL1.get(),&model.mChainL2.get(),
