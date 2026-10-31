@@ -436,13 +436,37 @@ void render(BaseActorRenderContext& ctx){
             // in every chunk even when those lines are on the GPU.
             std::vector<std::array<Vec3,2>>{}.swap(candidate->lines);
         }
+        // renderBlockEntities may leave an inherited world-to-camera matrix
+        // on the stack. push(false) cloned it, and the previous code then
+        // subtracted the camera a second time: the whole F7 world shifted
+        // down/away from the player's actual blocks.
+        //
+        // Begin from a known identity model matrix. The camera *view* stack
+        // can be either a world-to-eye matrix or orientation-only depending
+        // on the renderer pass. Detect which space it consumes so that the
+        // camera translation is applied exactly once.
+        auto const& view=ctx.mScreenContext.camera.viewMatrixStack.get().top()._m.get();
+        glm::vec3 const cameraWorld{camera.x,camera.y,camera.z};
+        glm::vec3 const cameraInView=view*glm::vec4(cameraWorld,1.f);
+        glm::vec3 const originInView=view*glm::vec4(0.f,0.f,0.f,1.f);
+        bool const viewAlreadySubtractsCamera=
+            glm::all(glm::isfinite(cameraInView)) &&
+            glm::all(glm::isfinite(originInView)) &&
+            glm::length(cameraInView)+0.5f<glm::length(originInView);
         for(auto& [key,chunk]:gChunks){
             if(!chunk.ready || !chunk.gpu || !chunk.gpu->isValid() ||
                !visible(ctx,chunk,camera))continue;
-            auto stack=ctx.mScreenContext.camera.worldMatrixStack.get().push(false);
-            stack.mat->translate(static_cast<float>(chunk.x*16)-camera.x,
-                                 static_cast<float>(chunk.minY)-camera.y,
-                                 static_cast<float>(chunk.z*16)-camera.z);
+            // Never inherit the original block-entity model transform.
+            auto stack=ctx.mScreenContext.camera.worldMatrixStack.get().pushIdentity(false);
+            float tx=static_cast<float>(chunk.x*16);
+            float ty=static_cast<float>(chunk.minY);
+            float tz=static_cast<float>(chunk.z*16);
+            if(!viewAlreadySubtractsCamera){
+                tx-=camera.x;
+                ty-=camera.y;
+                tz-=camera.z;
+            }
+            stack.mat->translate(tx,ty,tz);
             chunk.gpu->renderMesh(ctx.mScreenContext,material,texture,0,
                 chunk.gpu->mVertexCount.get().value_or(0u),empty.get(),nullptr);
         }
