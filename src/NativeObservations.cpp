@@ -10,6 +10,7 @@
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockShape.h"
 #include "mc/client/model/models/Model.h"
+#include "mc/client/model/Geometry.h"
 #include "mc/client/model/geom/ModelPart.h"
 #include "mc/client/model/geom/Cube.h"
 #include "mc/client/renderer/blockactor/ChestRenderer.h"
@@ -46,6 +47,13 @@ struct IdHash {
 std::unordered_set<std::array<std::uint32_t,27>,IdHash> seen;
 std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
+// Capture native box inputs at model construction, before their CPU Cube
+// definitions can be compacted into GPU meshes. These are not synthetic AABBs.
+struct SourceBoxes {bool fromGeometryResource{};std::vector<std::string> boxes;};
+std::mutex sourceBoxesMutex;
+std::unordered_map<ModelPart const*,SourceBoxes> sourceBoxes;
+constexpr std::size_t MaxSourceParts=8192;
+constexpr std::size_t MaxSourceBoxesPerPart=256;
 constexpr std::size_t MaxDistinctScenes=8192;
 constexpr std::size_t MaxDistinctPerShape=768;
 std::unordered_map<int,std::size_t> shapesObserved;
@@ -108,7 +116,7 @@ std::string modelJson(Model const& model,
     o<<"{\"schema\":1,\"source\":\"native_block_actor_model_parts\","
      "\"coordinate_space\":\"model_local\",\"animation_pose\":\"not_captured\",\"parts\":[";
     bool firstPart=true;
-    std::size_t cubes=0,polyFaces=0,unresolvedCubes=0;
+    std::size_t cubes=0,polyFaces=0,sourceBoxCount=0,unresolvedCubes=0;
     for(std::size_t index=0;index<parts.size();++index){
         auto const* part=parts[index];
         if(!part)continue;
@@ -157,6 +165,22 @@ std::string modelJson(Model const& model,
             o<<"]}";
         }
         o<<"]";
+        // Read the exact model-construction box parameters if compiled GPU
+        // geometry no longer exposes Cube.mSize at observation time.
+        // This can recover built-in model dimensions and resource face UVs.
+        {
+            std::lock_guard sourceLock(sourceBoxesMutex);
+            auto const it=sourceBoxes.find(part);
+            if(it!=sourceBoxes.end() && !it->second.boxes.empty()){
+                o<<",\"native_source_boxes\":[";
+                for(std::size_t i=0;i<it->second.boxes.size();++i){
+                    if(i)o<<',';
+                    o<<it->second.boxes[i];
+                }
+                o<<']';
+                sourceBoxCount+=it->second.boxes.size();
+            }
+        }
         // Some data-driven BlockActors use an indexed polygon mesh rather
         // than procedural Cubes. Preserve the original vertex/normal/UV
         // indices and topology instead of approximating it with a box.
@@ -221,7 +245,7 @@ std::string modelJson(Model const& model,
     }
     o<<"],\"unresolved_compiled_cubes\":"<<unresolvedCubes
      <<",\"geometry_complete\":"<<(unresolvedCubes==0?"true":"false")<<"}\n";
-    return cubes||polyFaces?o.str():std::string{};
+    return cubes||polyFaces||sourceBoxCount?o.str():std::string{};
 }
 void recordActor(char const* label,Model const& model,
                  std::initializer_list<ModelPart const*> explicitParts){
@@ -384,6 +408,79 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     addCapturePreview(pos,mesh);
     pending.push_back(NativeObservation{ids,std::move(mesh)});
 }
+// Capture at construction time: numerous BlockActor models retain only a
+// compiled render mesh by the time the F8 observation begins.
+LL_TYPE_INSTANCE_HOOK(BSCPartAddBoxHook,ll::memory::HookPriority::Normal,
+    ModelPart,&ModelPart::addBox,void,
+    Vec3 const& originPos,Vec3 const& extents,bool mirror,float inflate,
+    mce::Color const& color) {
+    origin(originPos,extents,mirror,inflate,color);
+    auto finite=[](float x){return std::isfinite(x)&&std::abs(x)<1024.f;};
+    if(!finite(originPos.x)||!finite(originPos.y)||!finite(originPos.z)||
+       !finite(extents.x)||!finite(extents.y)||!finite(extents.z)||
+       !finite(inflate)||extents.x==0.f||extents.y==0.f||extents.z==0.f)return;
+    std::unique_lock lock(sourceBoxesMutex,std::try_to_lock);
+    if(!lock.owns_lock())return;
+    auto it=sourceBoxes.find(this);
+    if(it==sourceBoxes.end()){
+        if(sourceBoxes.size()>=MaxSourceParts)return;
+        it=sourceBoxes.try_emplace(this).first;
+    }
+    auto& dest=it->second;
+    if(dest.fromGeometryResource || dest.boxes.size()>=MaxSourceBoxesPerPart)return;
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out<<std::setprecision(std::numeric_limits<float>::max_digits10);
+    out<<"{\"source\":\"native_modelpart_addbox\",\"origin\":";
+    vec3(out,originPos);
+    out<<",\"size\":";vec3(out,extents);
+    out<<",\"mirror\":"<<(mirror?"true":"false")
+       <<",\"inflate\":"<<inflate<<",\"uv_complete\":false}";
+    dest.boxes.emplace_back(out.str());
+}
+LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
+    ModelPart,&ModelPart::loadBoxes,void,
+    Vec3 const& pivot,Vec3 const& offset,
+    std::vector<Geometry::Box> const& boxes,Vec3 const& bindRotation) {
+    origin(pivot,offset,boxes,bindRotation);
+    if(boxes.empty()||boxes.size()>MaxSourceBoxesPerPart)return;
+    std::unique_lock lock(sourceBoxesMutex,std::try_to_lock);
+    if(!lock.owns_lock())return;
+    auto it=sourceBoxes.find(this);
+    if(it==sourceBoxes.end()){
+        if(sourceBoxes.size()>=MaxSourceParts)return;
+        it=sourceBoxes.try_emplace(this).first;
+    }
+    auto& dest=it->second;
+    dest.fromGeometryResource=true;
+    dest.boxes.clear();
+    for(auto const& box:boxes){
+        auto const& size=box.mSize.get();
+        if(!std::isfinite(size.x)||!std::isfinite(size.y)||!std::isfinite(size.z)||
+           size.x==0.f||size.y==0.f||size.z==0.f)continue;
+        std::ostringstream out;
+        out.imbue(std::locale::classic());
+        out<<std::setprecision(std::numeric_limits<float>::max_digits10);
+        out<<"{\"source\":\"native_geometry_resource_box\",\"origin\":";
+        vec3(out,box.mFrom.get());
+        out<<",\"size\":";vec3(out,size);
+        out<<",\"rotation\":";vec3(out,box.mRotation.get());
+        out<<",\"pivot\":";vec3(out,box.mPivot.get());
+        out<<",\"mirror\":"<<(box.mMirror?"true":"false")<<",\"faces\":[";
+        auto const& faces=box.mFaceUVs.get();
+        for(std::size_t i=0;i<faces.size();++i){
+            if(i)out<<',';
+            out<<"{\"face\":"<<i<<",\"valid\":"
+               <<(faces[i].mFaceValid?"true":"false")<<",\"uv\":";
+            vec2(out,faces[i].mUV.get());
+            out<<",\"uv_size\":";vec2(out,faces[i].mUVSize.get());
+            out<<",\"material_index\":"<<faces[i].mMaterialInstanceListIndex
+               <<",\"uv_rotation\":"<<static_cast<int>(faces[i].mUvRotation)<<'}';
+        }
+        out<<"],\"uv_complete\":true}";
+        dest.boxes.emplace_back(out.str());
+    }
+}
 LL_TYPE_INSTANCE_HOOK(BSCNativeBlockHook,ll::memory::HookPriority::Normal,
     BlockTessellator,&BlockTessellator::tessellateInWorld,bool,
     Tessellator& tess,Block const& block,BlockPos const& pos,bool useCache) {
@@ -444,10 +541,13 @@ LL_TYPE_INSTANCE_HOOK(BSCBellModelHook,ll::memory::HookPriority::Normal,
     auto const& model=this->mBell.get();
     recordActor("bell",model,{&model.mBellBody.get(),&model.mBellBase.get()});
 }
+bool installedPartAdd{},installedPartLoad{};
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
      installedBed{},installedShulker{},installedBell{};
 }
 bool installNativeObservations(){
+    installedPartAdd=BSCPartAddBoxHook::hook()==0;
+    installedPartLoad=BSCPartLoadBoxesHook::hook()==0;
     installedWorld=BSCNativeBlockHook::hook()==0;
     installedChest=BSCChestModelHook::hook()==0;
     installedSign=BSCSignModelHook::hook()==0;
@@ -500,6 +600,9 @@ std::vector<ActorModelSnapshot> takeActorModels(){
 }
 void uninstallNativeObservations(){
     armed.store(false,std::memory_order_release);
+    if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}
+    if(installedPartAdd){BSCPartAddBoxHook::unhook();installedPartAdd=false;}
+    {std::lock_guard lock(sourceBoxesMutex);sourceBoxes.clear();}
     if(installedBell){BSCBellModelHook::unhook();installedBell=false;}
     if(installedShulker){BSCShulkerModelHook::unhook();installedShulker=false;}
     if(installedBed){BSCBedModelHook::unhook();installedBed=false;}
