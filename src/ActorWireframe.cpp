@@ -8,6 +8,13 @@
 #include "mc/client/model/models/Model.h"
 #include "mc/client/renderer/BaseActorRenderContext.h"
 #include "mc/client/renderer/blockactor/BlockActorRenderData.h"
+#include "mc/client/renderer/blockactor/BlockActorRenderDispatcher.h"
+#include "mc/world/level/BlockSource.h"
+#include "mc/world/level/block/Block.h"
+#include "mc/world/level/BlockPos.h"
+#include "mc/deps/minecraft_renderer/framebuilder/dragon/RenderMetadata.h"
+#include "mc/deps/minecraft_renderer/renderer/MaterialPtr.h"
+#include "mc/deps/minecraft_renderer/resources/ClientTexture.h"
 #include "mc/client/game/ClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/gui/screens/ScreenContext.h"
@@ -22,6 +29,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace bsc {
@@ -39,6 +47,7 @@ thread_local std::vector<ActorWireSegment> lines;
 std::atomic<std::uint64_t> partsCalled{},partsWithCpuGeometry{},partsWithValidTransform{},
     missingCpuGeometry{},discardedTransforms{},emittedSegments{};
 bool installed{};
+bool dispatcherInstalled{};
 
 bool finite(glm::vec3 const& v){
     return std::isfinite(v.x)&&std::isfinite(v.y)&&std::isfinite(v.z);
@@ -217,12 +226,33 @@ LL_TYPE_INSTANCE_HOOK(BSCActorPartWireHook,ll::memory::HookPriority::Normal,
     observePart(*this,screen,scale,boneToEntitySpaceMatrix);
     origin(screen,model,scale,hideParentBodyPart,count,boneToEntitySpaceMatrix);
 }
+// This dispatcher overload is used by the level renderer with the
+// *actual* BlockActor world position; it is not restricted to manually
+// enumerated chest/sign/bell renderers.
+using RenderWithWorldPosition = void (BlockActorRenderDispatcher::*)(
+    BaseActorRenderContext&,BlockSource&,IVanillaRenderBlockActorComponent&,
+    Block const&,Vec3 const&,BlockPos const&,bool,mce::MaterialPtr const&,
+    mce::ClientTexture const*,int,std::optional<dragon::RenderMetadata>);
+constexpr RenderWithWorldPosition NativeBlockActorRender =
+    static_cast<RenderWithWorldPosition>(&BlockActorRenderDispatcher::render);
+LL_TYPE_INSTANCE_HOOK(BSCActorDispatchWireHook,ll::memory::HookPriority::Normal,
+    BlockActorRenderDispatcher,NativeBlockActorRender,void,
+    BaseActorRenderContext& ctx,BlockSource& source,
+    IVanillaRenderBlockActorComponent& component,Block const& block,
+    Vec3 const& renderPos,BlockPos const& worldPos,bool alpha,
+    mce::MaterialPtr const& forcedMat,mce::ClientTexture const* forcedTex,
+    int breakingAmount,std::optional<dragon::RenderMetadata> metadata){
+    ActorWireframeScope scope{ctx,worldPos,renderPos};
+    origin(ctx,source,component,block,renderPos,worldPos,alpha,
+           forcedMat,forcedTex,breakingAmount,std::move(metadata));
+}
 } // namespace
 ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,
-                                         BlockActorRenderData const& data){
+                                         BlockActorRenderData const& data)
+    :ActorWireframeScope(ctx,data.worldPosition.get(),data.renderPosition){}
+ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,
+                                         BlockPos const& position,Vec3 const& relative){
     if(!gPreviewEnabled.load(std::memory_order_relaxed))return;
-    auto const& position=data.worldPosition.get();
-    auto const& relative=data.renderPosition;
     glm::vec3 camera{};
     auto const& impl=ctx.mImpl.get();
     if(impl){
@@ -246,6 +276,14 @@ ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,
 ActorWireframeScope::~ActorWireframeScope(){
     if(active_ && !contexts.empty())contexts.pop_back();
 }
+bool installActorDispatcherWireHook(ll::mod::NativeMod& mod){
+    if(dispatcherInstalled)return true;
+    mod.getLogger().info("F7 native BlockEntity dispatcher BEGIN: BlockActorRenderDispatcher::render");
+    dispatcherInstalled=(BSCActorDispatchWireHook::hook()==0);
+    if(dispatcherInstalled)mod.getLogger().info("F7 native BlockEntity dispatcher OK");
+    else mod.getLogger().warn("F7 BlockActor dispatcher unavailable; trying per-type renderer hooks");
+    return dispatcherInstalled;
+}
 bool installActorWireframePartHook(ll::mod::NativeMod& mod){
     if(installed)return true;
     mod.getLogger().info("F7 native BlockEntity part hook BEGIN: ModelPart::render");
@@ -256,6 +294,7 @@ bool installActorWireframePartHook(ll::mod::NativeMod& mod){
 }
 void uninstallActorWireframePartHook(){
     if(installed){BSCActorPartWireHook::unhook();installed=false;}
+    if(dispatcherInstalled){BSCActorDispatchWireHook::unhook();dispatcherInstalled=false;}
     lines.clear();
     contexts.clear();
 }

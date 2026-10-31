@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <vector>
 class BaseActorRenderContext;
+class BlockPos;
+class Vec3;
 struct BlockActorRenderData;
 struct Vec3;
 namespace ll::mod {class NativeMod;}
@@ -15,6 +17,7 @@ struct ActorWireSegment {
 class ActorWireframeScope {
 public:
     ActorWireframeScope(BaseActorRenderContext&,BlockActorRenderData const&);
+    ActorWireframeScope(BaseActorRenderContext&,BlockPos const&,Vec3 const&);
     ~ActorWireframeScope();
     ActorWireframeScope(ActorWireframeScope const&)=delete;
     ActorWireframeScope& operator=(ActorWireframeScope const&)=delete;
@@ -26,6 +29,8 @@ struct ActorWireframeStats {
     std::uint64_t missingCpuGeometry{}, discardedTransforms{}, emittedSegments{};
 };
 bool installActorWireframePartHook(ll::mod::NativeMod&);
+// The dispatcher includes renderers beyond the seven built-in F8 model hooks.
+bool installActorDispatcherWireHook(ll::mod::NativeMod&);
 void uninstallActorWireframePartHook();
 void beginActorWireframeFrame();
 std::vector<ActorWireSegment> takeActorWireframeSegments();

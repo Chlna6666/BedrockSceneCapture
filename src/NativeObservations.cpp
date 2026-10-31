@@ -739,7 +739,8 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
         []{return BSCPistonArmModelHook::hook();});
 }
 bool installActorWireframeObservations(ll::mod::NativeMod& mod){
-    installActorRenderHooks(mod);
+    bool const dispatcher=installActorDispatcherWireHook(mod);
+    if(!dispatcher)installActorRenderHooks(mod);
     return installActorWireframePartHook(mod);
 }
 bool installNativeObservations(ll::mod::NativeMod& mod){
