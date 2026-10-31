@@ -24,6 +24,7 @@ def validate(root: Path):
     expected_hashes=set()
     refs=0
     unknown_triangles=0
+    observed_shapes=set()
     by_network_id={
         b.get("network_id"):b for b in states
         if isinstance(b.get("network_id"),int) and not isinstance(b.get("network_id"),bool)
@@ -79,6 +80,16 @@ def validate(root: Path):
             meshes=v.get("mesh_refs",[])
             face_slots=v.get("mesh_triangle_texture_slots",[])
             variant_slots=v.get("mesh_triangle_texture_variant_indices",[])
+            shape_hashes=v.get("mesh_geometry_hashes")
+            if shape_hashes is not None:
+                if not isinstance(shape_hashes,list) or len(shape_hashes)!=len(meshes):
+                    errors.append("geometry shape hash count mismatch")
+                else:
+                    for shape in shape_hashes:
+                        if not isinstance(shape,str) or HASH_RE.fullmatch(shape) is None:
+                            errors.append("invalid geometry shape hash")
+                        else:
+                            observed_shapes.add(shape)
             if len(face_slots)!=len(meshes) or len(variant_slots)!=len(meshes):
                 errors.append("missing face binding arrays")
             unknown_triangles+=v.get("unresolved_texture_triangles",0)
@@ -156,11 +167,18 @@ def validate(root: Path):
                 errors.append("invalid native BlockActor model structure")
             else:
                 cubes=[c for p in actor_json["parts"] for c in p.get("cubes",[])]
-                if not any(
-                    len(c.get("size",[]))==3 and
-                    all(isinstance(n,(int,float)) and math.isfinite(n) and n!=0 for n in c["size"])
-                    for c in cubes
-                ):
+                source_boxes=[c for p in actor_json["parts"] for c in p.get("native_source_boxes",[])]
+                poly=[p.get("poly_mesh",{}) for p in actor_json["parts"]]
+                def nonzero_box(c):
+                    size=c.get("size",[])
+                    return len(size)==3 and all(
+                        isinstance(n,(int,float)) and math.isfinite(n) and n!=0
+                        for n in size)
+                has_polygons=any(
+                    p.get("positions") and (p.get("triangles") or p.get("quads"))
+                    for p in poly)
+                if not (any(map(nonzero_box,cubes)) or
+                        any(map(nonzero_box,source_boxes)) or has_polygons):
                     errors.append("native BlockActor model has no nonzero geometry")
         except (OSError,ValueError) as exc:
             errors.append(f"unreadable native block actor model: {exc}")
@@ -187,6 +205,10 @@ def validate(root: Path):
         errors.append("static model count")
     if unknown_triangles!=manifest.get("unresolved_texture_triangles"):
         errors.append("unresolved triangle count")
+    if "unique_geometry_shapes" in manifest and (
+        manifest["unique_geometry_shapes"]!=len(observed_shapes)
+    ):
+        errors.append("canonical geometry shape count mismatch")
     if entities.get("status")!="unsupported" and not (
         entities.get("geometry") or actor_models
     ):
@@ -219,6 +241,19 @@ def self_test():
         for name,obj in examples.items():
             (p/name).write_text(json.dumps(obj),encoding="utf-8")
         assert validate(p)["valid"]
+        # Model geometry can be identical across different texture bindings.
+        # The optional canonical hash is tracked independently from UV data.
+        variant=examples["blocks.json"]["blocks"][0]["variants"][0]
+        variant["mesh_geometry_hashes"]=["0"*64]
+        examples["manifest.json"]["unique_geometry_shapes"]=1
+        for name in ("blocks.json","manifest.json"):
+            (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
+        assert validate(p)["valid"],"geometry hash metadata rejected"
+        variant["mesh_geometry_hashes"]=[]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        assert "geometry shape hash count mismatch" in validate(p)["errors"]
+        variant["mesh_geometry_hashes"]=["0"*64]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
         # Face-local registry mesh uses the native slot index and leaves
         # runtime atlas variants unset. BMCBL resolves texture aliases.
         local_mesh={
