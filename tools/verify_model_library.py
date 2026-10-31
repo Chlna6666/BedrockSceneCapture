@@ -240,7 +240,7 @@ def self_test():
             "geometry_source":"native_world_tessellation","uv_space":"runtime_terrain_atlas",
             "vertices":[[-352,0,0,0,0,1,0,0,4294967295]],
             "indices":[]}
-        badraw=(json.dumps(badmesh,separators=(",",":"))+"\\n").encode()
+        badraw=(json.dumps(badmesh,separators=(",",":"))+"\n").encode()
         badhash=hashlib.sha256(badraw).hexdigest()
         (p/"meshes"/(badhash+".json")).write_bytes(badraw)
         variant["mesh_refs"]=[badhash]
