@@ -288,6 +288,9 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::set<std::string> staticModelHashes;
         std::map<std::string,std::string> staticModelIndex;
         std::map<std::string, std::uint32_t> statuses;
+        std::set<std::string> capturedActorModelKeys;
+        for(auto const& actor:data.actorModels)
+            if(!actor.geometryJson.empty())capturedActorModelKeys.insert(actor.name);
         std::ostringstream blocks, coverage;
         blocks << "{\"schema\":1,\"key_encoding\":\"native_block_state_nbt_le_hex\","
                   "\"uv_space\":\"per_mesh_declared\",\"blocks\":[";
@@ -316,8 +319,13 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             if (block.air) {
                 stateStatus="complete"; reason="air requires no geometry";
             } else if (block.blockEntity) {
-                stateStatus="unsupported";
-                reason="dedicated block-entity renderer not hooked; optional base block mesh may be sampled but is not a complete model";
+                bool hasActorGeometry=false;
+                for(auto const& key:block.actorModelKeys)
+                    if(capturedActorModelKeys.contains(key)){hasActorGeometry=true;break;}
+                stateStatus=hasActorGeometry?"partial":"unsupported";
+                reason=hasActorGeometry
+                    ? "native BlockActor base geometry captured; animation, text, NBT and variant transforms remain unresolved"
+                    : "no usable native BlockActor model observed for this block family";
             } else if (block.dynamic) {
                 stateStatus="dynamic";
                 reason="neighbor-dependent geometry; samples do not constitute a complete offline rule";
@@ -342,7 +350,22 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ",\"status\":" << quoted(stateStatus)
                    << ",\"native_render_layer\":" << block.renderLayer
                    << ",\"block_actor_type\":" << block.blockActorType
-                   << ",\"native_block_shape\":" << block.nativeShape
+                   << ",\"actor_model_keys\":[";
+            bool firstActorKey=true;
+            for(auto const& key:block.actorModelKeys){
+                if(!firstActorKey)blocks<<',';
+                firstActorKey=false;
+                blocks<<quoted(key);
+            }
+            blocks << "],\"captured_actor_model_keys\":[";
+            firstActorKey=true;
+            for(auto const& key:block.actorModelKeys){
+                if(!capturedActorModelKeys.contains(key))continue;
+                if(!firstActorKey)blocks<<',';
+                firstActorKey=false;
+                blocks<<quoted(key);
+            }
+            blocks << "],\"native_block_shape\":" << block.nativeShape
                    << ",\"geometry_context\":" << quoted(block.geometryContext)
                    << ",\"visual_bounds_mesh_generated\":"
                    << (block.visualBoundsAvailable?"true":"false")
