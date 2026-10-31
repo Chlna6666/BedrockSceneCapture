@@ -247,6 +247,7 @@ def self_test():
         # No duplicated geometry is required for an audio-only pitch change:
         # preserve its BlockState but reference the original model by ID.
         state["name"]="minecraft:noteblock"
+        variant["neighborhood"]="registry_visual_bounds"
         state["network_id"]=42
         second={"name":"minecraft:noteblock","network_id":43,
                 "geometry_alias_network_id":42,"status":"partial",
@@ -261,6 +262,7 @@ def self_test():
         (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
         assert "invalid canonical geometry state reference" in validate(p)["errors"]
         examples["blocks.json"]["blocks"].pop()
+        variant.pop("neighborhood")
         examples["manifest.json"]["registered_block_states"]=1
         examples["coverage.json"]["counts"]["partial"]=1
         for name in ("blocks.json","manifest.json","coverage.json"):
