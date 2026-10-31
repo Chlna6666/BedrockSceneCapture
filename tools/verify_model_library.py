@@ -406,7 +406,7 @@ def self_test():
         (gdir/(ghash+".json")).write_bytes(raw_geom)
         (adir/(ahash+".json")).write_bytes(raw_appearance)
         material={"schema":2,"texture_bindings":state["texture_bindings"]}
-        raw_material=(json.dumps(material,separators=(",",":"))+"\\n").encode()
+        raw_material=(json.dumps(material,separators=(",",":"))+"\n").encode()
         mhash=hashlib.sha256(raw_material).hexdigest()
         mdir=p/"geometry_pool"/"materials"
         mdir.mkdir(parents=True)
