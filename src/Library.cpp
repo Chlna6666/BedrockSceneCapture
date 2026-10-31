@@ -1,4 +1,5 @@
 #include "Library.h"
+#include "GeometryPool.h"
 #include <Windows.h>
 #include <bcrypt.h>
 #include <algorithm>
@@ -305,6 +306,8 @@ bool usesBlockEntityRenderer(std::string const& name) {
 bool saveLibrary(LibraryData const& data, std::string& error) {
     try {
         std::filesystem::create_directories(data.directory / "meshes");
+        std::filesystem::create_directories(data.directory / "geometry_pool" / "geometry");
+        std::filesystem::create_directories(data.directory / "geometry_pool" / "appearance");
         // Invalidate any manifest from an earlier run before rewriting the
         // version-scoped indexes. If this export crashes or I/O fails,
         // a stale manifest must not advertise old results as current.
@@ -320,6 +323,11 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::map<Mesh const*,std::string> memoizedMeshes;
         std::map<Mesh const*,std::string> memoizedShapes;
         std::set<std::string> uniqueShapeHashes;
+        std::set<std::string> uniqueExactGeometries;
+        std::set<std::string> uniqueAppearances;
+        std::map<Mesh const*,SharedMeshEncoding> canonicalGeometryCache;
+        std::map<Mesh const*,std::string> canonicalGeometryRefs;
+        std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,std::string> canonicalAppearanceRefs;
         std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,TriangleBindings> memoizedBindings;
         std::map<std::vector<TextureBinding> const*,std::string> memoizedTextureTables;
         std::set<std::string> staticModelHashes;
@@ -489,6 +497,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 std::vector<std::string> perMeshTextureSlots;
                 std::vector<std::string> perMeshTextureVariants;
                 std::vector<std::string> perMeshGeometryHashes;
+                std::vector<std::string> perMeshSharedGeometry;
+                std::vector<std::string> perMeshSharedAppearance;
                 std::uint64_t localUnmatched=0;
                 for (auto const& meshRef : sample.meshes) {
                     try {
@@ -508,13 +518,40 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                         auto shapeIt=memoizedShapes.find(&mesh);
                         if(shapeIt==memoizedShapes.end())
                             shapeIt=memoizedShapes.emplace(&mesh,geometryShapeHash(mesh)).first;
-                        uniqueShapeHashes.insert(shapeIt->second);
-                        perMeshGeometryHashes.push_back(shapeIt->second);
                         auto bindingKey=std::make_pair(&mesh,block.textures.get());
                         auto bindingIt=memoizedBindings.find(bindingKey);
                         if(bindingIt==memoizedBindings.end())
                             bindingIt=memoizedBindings.emplace(bindingKey,faceBindingJson(mesh,block)).first;
                         auto const& bindings=bindingIt->second;
+                        // V2 shared geometry is independent of UV, tint, material
+                        // and state. Exact float32 positions and triangle winding
+                        // prevent the lossy quantization of legacy geometry hashes.
+                        auto encoded=canonicalGeometryCache.find(&mesh);
+                        if(encoded==canonicalGeometryCache.end())
+                            encoded=canonicalGeometryCache.emplace(
+                                &mesh,encodeSharedGeometry(mesh)).first;
+                        auto geoRef=canonicalGeometryRefs.find(&mesh);
+                        if(geoRef==canonicalGeometryRefs.end()){
+                            std::string geoHash=sha256(encoded->second.geometryJson);
+                            if(uniqueExactGeometries.insert(geoHash).second)
+                                atomicFile(data.directory/"geometry_pool"/"geometry"/(geoHash+".json"),
+                                           encoded->second.geometryJson);
+                            geoRef=canonicalGeometryRefs.emplace(&mesh,std::move(geoHash)).first;
+                        }
+                        auto appRef=canonicalAppearanceRefs.find(bindingKey);
+                        if(appRef==canonicalAppearanceRefs.end()){
+                            auto appearance=encodeSharedAppearance(mesh,encoded->second,geoRef->second,
+                                bindings.slots,bindings.variants);
+                            auto appHash=sha256(appearance);
+                            if(uniqueAppearances.insert(appHash).second)
+                                atomicFile(data.directory/"geometry_pool"/"appearance"/(appHash+".json"),
+                                           appearance);
+                            appRef=canonicalAppearanceRefs.emplace(bindingKey,std::move(appHash)).first;
+                        }
+                        uniqueShapeHashes.insert(shapeIt->second);
+                        perMeshGeometryHashes.push_back(shapeIt->second);
+                        perMeshSharedGeometry.push_back(geoRef->second);
+                        perMeshSharedAppearance.push_back(appRef->second);
                         layers.insert(mesh.layer);
                         if (!firstMesh) blocks << ',';
                         firstMesh=false;
@@ -541,6 +578,16 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 for(std::size_t i=0;i<perMeshGeometryHashes.size();++i){
                     if(i)blocks<<',';
                     blocks<<quoted(perMeshGeometryHashes[i]);
+                }
+                blocks << "],\"shared_geometry_refs\":[";
+                for(std::size_t i=0;i<perMeshSharedGeometry.size();++i){
+                    if(i)blocks<<',';
+                    blocks<<quoted(perMeshSharedGeometry[i]);
+                }
+                blocks << "],\"shared_appearance_refs\":[";
+                for(std::size_t i=0;i<perMeshSharedAppearance.size();++i){
+                    if(i)blocks<<',';
+                    blocks<<quoted(perMeshSharedAppearance[i]);
                 }
                 unmatchedFaces+=localUnmatched;
                 blocks << "],\"unresolved_texture_triangles\":" << localUnmatched
@@ -570,6 +617,29 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     "\"No block entity geometry or NBT renderer\","
                     "\"No entity skeletons or animation clips\","
                     "\"No verified local texture mapping or resource pack fingerprint\"]}\n";
+        // An index over immutable, hash-addressed v2 geometry and appearance
+        // streams. The legacy meshes/ folder remains available until BMCBL
+        // has migrated to V2 readers. Both share the same BlockState mapping.
+        std::ostringstream sharedIndex;
+        sharedIndex << "{\"schema\":2,\"format\":\"BSCSharedGeometryPool\","
+                    "\"geometry_precision\":\"exact_float32\","
+                    "\"rotation_equivalence\":false,"
+                    "\"neighbor_rules_complete\":false,"
+                    "\"legacy_meshes_retained\":true,\"geometry\":[";
+        bool firstShared=true;
+        for(auto const& hash:uniqueExactGeometries){
+            if(!firstShared)sharedIndex<<',';
+            firstShared=false;
+            sharedIndex<<quoted(hash);
+        }
+        sharedIndex << "],\"appearance\":[";
+        firstShared=true;
+        for(auto const& hash:uniqueAppearances){
+            if(!firstShared)sharedIndex<<',';
+            firstShared=false;
+            sharedIndex<<quoted(hash);
+        }
+        sharedIndex<<"]}\n";
         std::ostringstream modelIndex;
         modelIndex << "{\"schema\":1,\"source\":\"native_block_geometry_registry\","
                       "\"associations_verified\":false,\"models\":[";
@@ -661,6 +731,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     "\"native_meshes_unique\":" << writtenMeshes.size()
                  << ",\"native_mesh_refs\":" << meshRefs
                  << ",\"unique_geometry_shapes\":" << uniqueShapeHashes.size()
+                 << ",\"shared_geometry_pool_schema\":2"
+                 << ",\"shared_geometry_count\":" << uniqueExactGeometries.size()
+                 << ",\"shared_appearance_count\":" << uniqueAppearances.size()
+                 << ",\"legacy_meshes_retained\":true"
                  << ",\"static_geometry_models\":" << staticModelIndex.size()
                  << ",\"unresolved_texture_triangles\":" << unmatchedFaces
                  << ",\"sample_contexts\":" << samples
@@ -675,6 +749,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"cancelled\":" << (data.cancelled?"true":"false")
                  << ",\"complete\":false}\n";
         // Commit metadata last; an incomplete export is never advertised as complete.
+        atomicFile(data.directory/"geometry_pool.json",sharedIndex.str());
         atomicFile(data.directory/"blocks.json",blocks.str());
         atomicFile(data.directory/"geometry_catalog.json",modelIndex.str());
         atomicFile(data.directory/"entities.json",entities.str());
