@@ -202,6 +202,14 @@ void finish(bool cancelled) {
     armNativeObservations(false);
     collectNativeSamples(*gSession);
     gSession->library.cancelled=cancelled;
+    auto actorStatus=actorCaptureDiagnostics();
+    log().info("F8 BlockActor hooks: chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}; captured_models={}, observed_without_geometry={}",
+               actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
+               actorStatus.hooksInstalled[2],actorStatus.hooksInstalled[3],
+               actorStatus.hooksInstalled[4],actorStatus.hooksInstalled[5],
+               actorStatus.capturedModels,actorStatus.observedWithoutGeometry.size());
+    for(auto const& label:actorStatus.observedWithoutGeometry)
+        log().warn("F8 BlockActor renderer observed but no valid native model geometry: {}",label);
     auto directory=gSession->library.directory;
     auto registered=gSession->library.registered;
     auto sampled=gSession->library.sampledBlocks;

@@ -16,6 +16,13 @@ struct ActorModelSnapshot {
     std::string name;
     std::string geometryJson;
 };
+struct ActorCaptureDiagnostics {
+    // chest, standing sign, hanging sign, bed, shulker box, bell.
+    std::array<bool,6> hooksInstalled{};
+    std::size_t capturedModels{};
+    std::vector<std::string> observedWithoutGeometry;
+};
+ActorCaptureDiagnostics actorCaptureDiagnostics();
 bool installNativeObservations();
 void uninstallNativeObservations();
 void armNativeObservations(bool enabled);

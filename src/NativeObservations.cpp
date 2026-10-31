@@ -455,6 +455,18 @@ bool installNativeObservations(){
     installedBell=BSCBellModelHook::hook()==0;
     return installedWorld;
 }
+ActorCaptureDiagnostics actorCaptureDiagnostics(){
+    ActorCaptureDiagnostics diagnostics;
+    diagnostics.hooksInstalled={installedChest,installedSign,installedHanging,
+                                installedBed,installedShulker,installedBell};
+    std::lock_guard lock(mutex);
+    diagnostics.capturedModels=recordedActorLabels.size();
+    for(auto const& [label,lastAttempt]:actorLastAttempt){
+        if(!recordedActorLabels.contains(label))
+            diagnostics.observedWithoutGeometry.push_back(label);
+    }
+    return diagnostics;
+}
 void armNativeObservations(bool enabled){
     armed.store(enabled,std::memory_order_release);
 }
