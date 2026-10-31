@@ -31,6 +31,10 @@
 #include <optional>
 #include <utility>
 #include <vector>
+#include <iterator>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 
 namespace bsc {
 namespace {
@@ -44,6 +48,30 @@ struct ActorContext{
 };
 thread_local std::vector<ActorContext> contexts;
 thread_local std::vector<ActorWireSegment> lines;
+thread_local std::unordered_map<BlockActorRenderData const*,std::unique_ptr<ActorWireframeScope>> liveActorScopes;
+// BlockActor renderers can run on more than one thread. Do not assume that
+// the overlay's thread_local line buffer is the same as the renderer's.
+std::mutex pendingMutex;
+std::vector<ActorWireSegment> pendingSegments;
+std::atomic<float> activeCameraX{},activeCameraY{},activeCameraZ{};
+std::atomic_bool activeCameraValid{false};
+std::atomic<std::uint64_t> actorDataConstructed{},actorDataDestroyed{},actorBuffersFlushed{};
+bool dataHooksInstalled{};
+void flushActorSegments(){
+    if(lines.empty())return;
+    {
+        std::lock_guard lock(pendingMutex);
+        std::size_t const room= pendingSegments.size()<MaxActorSegments
+            ?MaxActorSegments-pendingSegments.size():0;
+        auto const count=std::min(room,lines.size());
+        pendingSegments.insert(pendingSegments.end(),
+            std::make_move_iterator(lines.begin()),
+            std::make_move_iterator(lines.begin()+count));
+    }
+    lines.clear();
+    actorBuffersFlushed.fetch_add(1,std::memory_order_relaxed);
+}
+
 std::atomic<std::uint64_t> partsCalled{},partsWithCpuGeometry{},partsWithValidTransform{},
     missingCpuGeometry{},discardedTransforms{},emittedSegments{};
 bool installed{};
@@ -166,7 +194,8 @@ LocalGeometry collectLocal(ModelPart const& part){
 }
 void observePart(ModelPart const& part,ScreenContext& screen,float scale,
                  Matrix const& boneMatrix){
-    if(!gPreviewEnabled.load(std::memory_order_relaxed)||contexts.empty()||
+    if(!(gPreviewEnabled.load(std::memory_order_relaxed)||
+         gCapturePreviewEnabled.load(std::memory_order_relaxed))||contexts.empty()||
        !contexts.back().valid||!part.mVisible||part.mNeverRender||
        lines.size()>=MaxActorSegments)return;
     partsCalled.fetch_add(1,std::memory_order_relaxed);
@@ -230,30 +259,96 @@ ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,
                                          BlockActorRenderData const& data)
     :ActorWireframeScope(ctx,data.worldPosition.get(),data.renderPosition){}
 ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,
-                                         BlockPos const& position,Vec3 const& relative){
-    if(!gPreviewEnabled.load(std::memory_order_relaxed))return;
-    glm::vec3 camera{};
-    auto const& impl=ctx.mImpl.get();
-    if(impl){
-        auto const& p=impl->mCameraPosition.get();
-        camera={p.x,p.y,p.z};
-    }
-    if(auto const* player=ctx.mClientInstance.getLocalPlayer()){
-        auto const eye=player->getEyePos();
-        glm::vec3 eyePos{eye.x,eye.y,eye.z};
-        if(!finite(camera)||glm::distance(camera,eyePos)>128.f)camera=eyePos;
-    }
+                                         BlockPos const& position,Vec3 const& relative)
+    :ActorWireframeScope(position,relative,[&]{
+        auto const& impl=ctx.mImpl.get();
+        Vec3 camera{};
+        if(impl)camera=impl->mCameraPosition.get();
+        if(auto const* player=ctx.mClientInstance.getLocalPlayer()){
+            auto eye=player->getEyePos();
+            glm::vec3 const raw{camera.x,camera.y,camera.z};
+            glm::vec3 const eyePos{eye.x,eye.y,eye.z};
+            if(!finite(raw)||glm::distance(raw,eyePos)>128.f)camera=eye;
+        }
+        return camera;
+    }()){}
+ActorWireframeScope::ActorWireframeScope(BlockPos const& position,
+                                         Vec3 const& relative,Vec3 const& camera){
+    if(!(gPreviewEnabled.load(std::memory_order_relaxed)||
+         gCapturePreviewEnabled.load(std::memory_order_relaxed)))return;
     ActorContext actor;
     actor.world={static_cast<float>(position.x),
                  static_cast<float>(position.y),static_cast<float>(position.z)};
     actor.relative={relative.x,relative.y,relative.z};
-    actor.camera=camera;
-    actor.valid=finite(actor.world)&&finite(actor.relative)&&finite(camera);
+    actor.camera={camera.x,camera.y,camera.z};
+    actor.valid=finite(actor.world)&&finite(actor.relative)&&finite(actor.camera);
+    if(!actor.valid)return;
     contexts.push_back(actor);
     active_=true;
 }
 ActorWireframeScope::~ActorWireframeScope(){
-    if(active_ && !contexts.empty())contexts.pop_back();
+    if(active_ && !contexts.empty()){
+        contexts.pop_back();
+        if(contexts.empty())flushActorSegments();
+    }
+}
+void updateActorWireframeCamera(Vec3 const& camera){
+    bool const ok=std::isfinite(camera.x)&&std::isfinite(camera.y)&&std::isfinite(camera.z);
+    if(ok){
+        activeCameraX.store(camera.x,std::memory_order_relaxed);
+        activeCameraY.store(camera.y,std::memory_order_relaxed);
+        activeCameraZ.store(camera.z,std::memory_order_relaxed);
+    }
+    activeCameraValid.store(ok,std::memory_order_release);
+}
+// The lifetime of BlockActorRenderData spans the native renderer call on
+// vanilla's dispatcher. Unlike an explicit list of renderer hooks, this
+// includes every BlockEntity family that uses BlockActorRenderData.
+// Keep the hook scoped; do not store raw BlockActorRenderData pointers.
+LL_TYPE_INSTANCE_HOOK(BSCActorDataCtorWireHook,ll::memory::HookPriority::Normal,
+    BlockActorRenderData,&BlockActorRenderData::$ctor,void*,
+    BlockSource& source,IVanillaRenderBlockActorComponent& entity,
+    Block const& block,Vec3 const& renderPos,BlockPos const& worldPos,
+    mce::MaterialPtr const& forcedMat,mce::ClientTexture forcedTex,
+    int breakingAmount,dragon::RenderMetadata metadata){
+    auto* result=origin(source,entity,block,renderPos,worldPos,
+                        forcedMat,std::move(forcedTex),breakingAmount,
+                        std::move(metadata));
+    if((gPreviewEnabled.load(std::memory_order_relaxed)||
+        gCapturePreviewEnabled.load(std::memory_order_relaxed))&&
+       activeCameraValid.load(std::memory_order_acquire)){
+        Vec3 camera{
+            activeCameraX.load(std::memory_order_relaxed),
+            activeCameraY.load(std::memory_order_relaxed),
+            activeCameraZ.load(std::memory_order_relaxed)
+        };
+        liveActorScopes.insert_or_assign(this,
+            std::make_unique<ActorWireframeScope>(worldPos,renderPos,camera));
+        actorDataConstructed.fetch_add(1,std::memory_order_relaxed);
+    }
+    return result;
+}
+LL_TYPE_INSTANCE_HOOK(BSCActorDataDtorWireHook,ll::memory::HookPriority::Normal,
+    BlockActorRenderData,&BlockActorRenderData::$dtor,void){
+    auto const erased=liveActorScopes.erase(this);
+    if(erased)actorDataDestroyed.fetch_add(1,std::memory_order_relaxed);
+    origin();
+}
+bool installUniversalActorDataHook(ll::mod::NativeMod& mod){
+    if(dataHooksInstalled)return true;
+    mod.getLogger().info("BlockEntity universal data hook BEGIN: BlockActorRenderData ctor/dtor");
+    if(BSCActorDataCtorWireHook::hook()!=0){
+        mod.getLogger().warn("BlockEntity universal data constructor hook failed");
+        return false;
+    }
+    if(BSCActorDataDtorWireHook::hook()!=0){
+        BSCActorDataCtorWireHook::unhook();
+        mod.getLogger().warn("BlockEntity universal data destructor hook failed");
+        return false;
+    }
+    dataHooksInstalled=true;
+    mod.getLogger().info("BlockEntity universal data hook OK");
+    return true;
 }
 bool installActorWireframePartHook(ll::mod::NativeMod& mod){
     if(installed)return true;
@@ -265,13 +360,41 @@ bool installActorWireframePartHook(ll::mod::NativeMod& mod){
 }
 void uninstallActorWireframePartHook(){
     if(installed){BSCActorPartWireHook::unhook();installed=false;}
+    if(dataHooksInstalled){
+        BSCActorDataDtorWireHook::unhook();
+        BSCActorDataCtorWireHook::unhook();
+        dataHooksInstalled=false;
+    }
+    liveActorScopes.clear();
     lines.clear();
     contexts.clear();
+    {
+        std::lock_guard lock(pendingMutex);
+        pendingSegments.clear();
+    }
 }
-void beginActorWireframeFrame(){lines.clear();}
+void beginActorWireframeFrame(){
+    // Clear only the *completed frame* buffer, not scopes still rendering.
+    std::lock_guard lock(pendingMutex);
+    pendingSegments.clear();
+}
 std::vector<ActorWireSegment> takeActorWireframeSegments(){
+    // A detached renderer thread's completed scopes are moved to the shared
+    // frame buffer by their BlockActorRenderData destructor.
     std::vector<ActorWireSegment> output;
-    output.swap(lines);
+    {
+        std::lock_guard lock(pendingMutex);
+        output.swap(pendingSegments);
+    }
+    if(!lines.empty()){
+        auto const room=output.size()<MaxActorSegments
+            ?MaxActorSegments-output.size():0;
+        auto const count=std::min(room,lines.size());
+        output.insert(output.end(),
+            std::make_move_iterator(lines.begin()),
+            std::make_move_iterator(lines.begin()+count));
+        lines.clear();
+    }
     return output;
 }
 ActorWireframeStats actorWireframeStats(){
@@ -280,6 +403,9 @@ ActorWireframeStats actorWireframeStats(){
             partsWithValidTransform.load(std::memory_order_relaxed),
             missingCpuGeometry.load(std::memory_order_relaxed),
             discardedTransforms.load(std::memory_order_relaxed),
-            emittedSegments.load(std::memory_order_relaxed)};
+            emittedSegments.load(std::memory_order_relaxed),
+            actorDataConstructed.load(std::memory_order_relaxed),
+            actorDataDestroyed.load(std::memory_order_relaxed),
+            actorBuffersFlushed.load(std::memory_order_relaxed)};
 }
 } // namespace bsc

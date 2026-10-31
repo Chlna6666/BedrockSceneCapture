@@ -18,6 +18,7 @@ class ActorWireframeScope {
 public:
     ActorWireframeScope(BaseActorRenderContext&,BlockActorRenderData const&);
     ActorWireframeScope(BaseActorRenderContext&,BlockPos const&,Vec3 const&);
+    ActorWireframeScope(BlockPos const&,Vec3 const&,Vec3 const&);
     ~ActorWireframeScope();
     ActorWireframeScope(ActorWireframeScope const&)=delete;
     ActorWireframeScope& operator=(ActorWireframeScope const&)=delete;
@@ -27,8 +28,11 @@ private:
 struct ActorWireframeStats {
     std::uint64_t partsCalled{}, partsWithCpuGeometry{}, partsWithValidTransform{};
     std::uint64_t missingCpuGeometry{}, discardedTransforms{}, emittedSegments{};
+    std::uint64_t actorDataConstructed{},actorDataDestroyed{},actorBuffersFlushed{};
 };
 bool installActorWireframePartHook(ll::mod::NativeMod&);
+bool installUniversalActorDataHook(ll::mod::NativeMod&);
+void updateActorWireframeCamera(Vec3 const&);
 // The dispatcher includes renderers beyond the seven built-in F8 model hooks.
 void uninstallActorWireframePartHook();
 void beginActorWireframeFrame();
