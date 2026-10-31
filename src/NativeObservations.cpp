@@ -55,30 +55,33 @@ std::mutex sourceBoxesMutex;
 std::unordered_map<ModelPart const*,SourceBoxes> sourceBoxes;
 constexpr std::size_t MaxSourceParts=8192;
 constexpr std::size_t MaxSourceBoxesPerPart=256;
-constexpr std::size_t MaxDistinctScenes=8192;
-constexpr std::size_t MaxDistinctPerShape=768;
+constexpr std::size_t MaxDistinctScenes=12288;
+// High frequency variants (walls, slabs) must not consume the whole capture.
+// A per-state quota distributes native coverage across more block families.
+constexpr std::size_t MaxDistinctPerShape=4096;
+constexpr std::size_t MaxDistinctPerState=12;
 std::unordered_map<int,std::size_t> shapesObserved;
+std::unordered_map<std::uint32_t,std::size_t> statesObserved;
+std::unordered_map<int,std::size_t> shapesRejected;
+std::atomic<std::uint64_t> tessellatorCalls{0};
+std::atomic<std::uint64_t> eligibleCalls{0};
+std::atomic<std::uint64_t> acceptedCalls{0};
 std::unordered_set<std::string> recordedActorLabels;
 std::unordered_map<std::string,std::chrono::steady_clock::time_point> actorLastAttempt;
 constexpr std::size_t MaxTotalVertices=2'000'000;
 std::size_t recordedVertices{};
 constexpr std::size_t MaxNativeVertices=8192;
-bool requiredWorldShape(BlockShape s){
-    switch(s){
-    case BlockShape::Stairs:
-    case BlockShape::Fence:
-    case BlockShape::FenceGate:
-    case BlockShape::Wall:
-    case BlockShape::MetalBars:
-    case BlockShape::DoubleSideFence:
-    case BlockShape::Water:
-    case BlockShape::BubbleColumn:
-    case BlockShape::RedDust:
-    case BlockShape::Rail:
-    case BlockShape::Tripwire:
-        return true;
-    default:return false;
-    }
+bool requiredWorldShape(BlockGraphics const& gfx){
+    // Never filter a non-cube just because its BlockShape is missing from a
+    // hand-written whitelist: crops, plants, composters, piston heads and
+    // many data-driven shapes otherwise get zero native samples.
+    if(gfx.mBlockShape!=BlockShape::Block)return true;
+    // Full unit cubes already have a registry geometry candidate. Keep the
+    // native F8 observation budget for nontrivial forms. This is an
+    // optimization ONLY, not proof that the shape is a true opaque cube.
+    auto const& box=gfx.mVisualShape.get();
+    return !(box.min.x==0.f&&box.min.y==0.f&&box.min.z==0.f&&
+             box.max.x==1.f&&box.max.y==1.f&&box.max.z==1.f);
 }
 std::string quote(std::string const& s){
     std::ostringstream o;
@@ -336,8 +339,10 @@ void reconstructMissingNormals(Mesh& mesh){
 void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,BlockPos const& pos,
                   std::size_t fromPos,std::size_t fromIdx){
     if(!armed.load(std::memory_order_relaxed))return;
+    tessellatorCalls.fetch_add(1,std::memory_order_relaxed);
     auto const* gfx=BlockGraphics::getForBlock(block);
-    if(!gfx || !requiredWorldShape(gfx->mBlockShape))return;
+    if(!gfx || !requiredWorldShape(*gfx))return;
+    eligibleCalls.fetch_add(1,std::memory_order_relaxed);
     auto& raw=tess.mMeshData.get();
     auto const& points=raw.mPositions.get();
     if(fromPos>points.size() || points.size()==fromPos ||
@@ -362,8 +367,10 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
             }
     std::unique_lock lock(mutex,std::try_to_lock);
     auto const shape=static_cast<int>(gfx->mBlockShape);
-    if(!lock.owns_lock()||seen.size()>=MaxDistinctScenes||
+    if(!lock.owns_lock())return;
+    if(seen.size()>=MaxDistinctScenes||
        shapesObserved[shape]>=MaxDistinctPerShape||
+       statesObserved[block.mNetworkId]>=MaxDistinctPerState||
        recordedVertices+points.size()-fromPos>MaxTotalVertices||
        !seen.emplace(ids).second)return;
     Mesh mesh;
@@ -406,6 +413,8 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     reconstructMissingNormals(mesh);
     recordedVertices+=mesh.vertices.size();
     ++shapesObserved[shape];
+    ++statesObserved[block.mNetworkId];
+    acceptedCalls.fetch_add(1,std::memory_order_relaxed);
     addCapturePreview(pos,mesh);
     pending.push_back(NativeObservation{ids,std::move(mesh)});
 }
@@ -635,6 +644,11 @@ void clearNativeObservations(){
     seen.clear();
     recordedVertices=0;
     shapesObserved.clear();
+    statesObserved.clear();
+    shapesRejected.clear();
+    tessellatorCalls.store(0,std::memory_order_relaxed);
+    eligibleCalls.store(0,std::memory_order_relaxed);
+    acceptedCalls.store(0,std::memory_order_relaxed);
     recordedActorLabels.clear();
     actorLastAttempt.clear();
     pending.clear();
