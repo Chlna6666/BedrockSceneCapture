@@ -149,6 +149,7 @@ std::string modelJson(Model const& model,
      "\"coordinate_space\":\"model_local\",\"animation_pose\":\"not_captured\",\"parts\":[";
     bool firstPart=true;
     std::size_t cubes=0,polyFaces=0,sourceBoxCount=0,unresolvedCubes=0;
+    std::size_t incompleteSourceUVs=0;
     for(std::size_t index=0;index<parts.size();++index){
         auto const* part=parts[index];
         if(!part)continue;
@@ -208,6 +209,8 @@ std::string modelJson(Model const& model,
                 for(std::size_t i=0;i<it->second.boxes.size();++i){
                     if(i)o<<',';
                     o<<it->second.boxes[i];
+                    if(it->second.boxes[i].find("\"uv_complete\":false")!=std::string::npos)
+                        ++incompleteSourceUVs;
                 }
                 o<<']';
                 sourceBoxCount+=it->second.boxes.size();
@@ -276,7 +279,10 @@ std::string modelJson(Model const& model,
         o<<"}";
     }
     o<<"],\"unresolved_compiled_cubes\":"<<unresolvedCubes
-     <<",\"geometry_complete\":"<<(unresolvedCubes==0?"true":"false")<<"}\n";
+     <<",\"incomplete_source_uv_boxes\":"<<incompleteSourceUVs
+     <<",\"geometry_complete\":"
+     <<(unresolvedCubes==0 && incompleteSourceUVs==0?"true":"false")
+     <<"}\n";
     return cubes||polyFaces||sourceBoxCount?o.str():std::string{};
 }
 void recordActor(char const* label,Model const& model,
@@ -780,6 +786,13 @@ void clearNativeObservations(){
     actorLastAttempt.clear();
     pending.clear();
     actorModels.clear();
+    // Source-box keys are raw ModelPart addresses. Never carry an address
+    // from a previous F8 session into a newly constructed model instance.
+    // All explicit F8 built-in templates are reconstructed after arming.
+    {
+        std::lock_guard sourceLock(sourceBoxesMutex);
+        sourceBoxes.clear();
+    }
 }
 std::vector<NativeObservation> takeNativeObservations(){
     std::lock_guard lock(mutex);
