@@ -914,10 +914,11 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
         // seven-bone models; their live poses must remain dynamic.
         for(bool onLectern:{false,true}){
             EnchantingBookModel model(onLectern);
-            auto const& parts=model.mBook.get();
             std::initializer_list<ModelPart const*> const nodes={
-                &parts[0],&parts[1],&parts[2],&parts[3],
-                &parts[4],&parts[5],&parts[6]
+                &model.mBook[0].get(),&model.mBook[1].get(),
+                &model.mBook[2].get(),&model.mBook[3].get(),
+                &model.mBook[4].get(),&model.mBook[5].get(),
+                &model.mBook[6].get()
             };
             auto const* label=onLectern?"lectern_book":"enchanting_book";
             recordActor(label,model,nodes);
