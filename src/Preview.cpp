@@ -60,7 +60,8 @@ constexpr std::size_t MaxResidentGpuSegments=1500000;
 constexpr std::size_t MaxVertexMarksPerChunk=2000;
 constexpr unsigned MaxChunkMeshes=512;
 constexpr unsigned RefreshFrames=120;
-constexpr unsigned RebuildFrames=900;
+// Avoid endlessly re-tessellating unchanged chunks while the player is exploring.
+constexpr unsigned RebuildFrames=3600;
 
 struct ChunkWire {
     int x{},z{},minY{},maxY{};
@@ -326,9 +327,13 @@ void update(BaseActorRenderContext& ctx){
     }
     auto started=Clock::now();
     auto volume=static_cast<std::uint32_t>((chunk.maxY-chunk.minY)*256);
+    // Native tessellation is the expensive operation, not scanning an air cell.
+    // Retain a strict per-frame time budget while batching more cells/calls;
+    // 512 cells and 2 tessellations previously serialized a dense chunk over
+    // hundreds of frames before a single visible GPU mesh could be uploaded.
     unsigned nativeCalls=0;
-    for(unsigned i=0;i<512 && chunk.cell<volume &&
-        nativeCalls<2 && Clock::now()-started<std::chrono::milliseconds(2);++i){
+    for(unsigned i=0;i<4096 && chunk.cell<volume &&
+        nativeCalls<12 && Clock::now()-started<std::chrono::microseconds(2500);++i){
         auto index=chunk.cell++;
         int x=index%16,z=(index/16)%16,y=chunk.minY+static_cast<int>(index/256);
         BlockPos pos{chunk.x*16+x,y,chunk.z*16+z};
