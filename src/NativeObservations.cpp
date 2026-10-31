@@ -11,6 +11,9 @@
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockShape.h"
 #include "mc/client/model/models/Model.h"
+#include "mc/client/model/models/ChestModel.h"
+#include "mc/client/model/models/BellModel.h"
+#include "mc/client/model/models/PistonArmModel.h"
 #include "mc/client/model/Geometry.h"
 #include "mc/client/model/geom/ModelPart.h"
 #include "mc/client/model/geom/Cube.h"
@@ -661,6 +664,69 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         static_cast<int>(installedPiston),
         static_cast<int>(installedPartAdd)+static_cast<int>(installedPartLoad));
     return installedWorld;
+}
+void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
+    // The renderer's models may already be compiled before F8 hooks exist.
+    // Recreate only native model classes with explicit zero-/scalar-argument
+    // SDK constructors. This is done once on the local game thread.
+    if(!armed.load(std::memory_order_acquire))return;
+    if(!installedPartAdd && !installedPartLoad){
+        mod.getLogger().warn("F8 model template reconstruction skipped: source box hooks unavailable");
+        return;
+    }
+    auto& logger=mod.getLogger();
+    auto discardCachedParts=[&](std::initializer_list<ModelPart const*> parts){
+        std::lock_guard lock(sourceBoxesMutex);
+        for(auto const* part:parts)sourceBoxes.erase(part);
+    };
+    auto logTemplate=[&](char const* name){
+        bool exists=false;
+        {
+            std::lock_guard lock(mutex);
+            exists=recordedActorLabels.contains(name);
+        }
+        if(exists)logger.info("F8 model template reconstructed: {}",name);
+        else logger.warn("F8 model template constructor yielded no usable geometry: {}",name);
+    };
+    try{
+        {
+            ChestModel model(false);
+            auto const& lid=model.mLid.get();
+            auto const& bottom=model.mBottom.get();
+            auto const& latch=model.mLock.get();
+            recordActor("chest_normal",model,{&lid,&bottom,&latch});
+            discardCachedParts({&lid,&bottom,&latch});
+            logTemplate("chest_normal");
+        }
+        {
+            ChestModel model(true);
+            auto const& lid=model.mLid.get();
+            auto const& bottom=model.mBottom.get();
+            auto const& latch=model.mLock.get();
+            recordActor("chest_large",model,{&lid,&bottom,&latch});
+            discardCachedParts({&lid,&bottom,&latch});
+            logTemplate("chest_large");
+        }
+        {
+            BellModel model;
+            auto const& body=model.mBellBody.get();
+            auto const& base=model.mBellBase.get();
+            recordActor("bell",model,{&body,&base});
+            discardCachedParts({&body,&base});
+            logTemplate("bell");
+        }
+        {
+            PistonArmModel model;
+            auto const& base=model.mArmBase.get();
+            auto const& arm=model.mArm.get();
+            auto const& head=model.mFront.get();
+            recordActor("piston_arm",model,{&base,&arm,&head});
+            discardCachedParts({&base,&arm,&head});
+            logTemplate("piston_arm");
+        }
+    }catch(std::exception const& e){
+        logger.warn("F8 native model template reconstruction failed: {}",e.what());
+    }
 }
 NativeSceneDiagnostics nativeSceneDiagnostics(){
     NativeSceneDiagnostics out;

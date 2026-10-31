@@ -285,6 +285,10 @@ void begin(LocalPlayer* player) {
                session->registrationTypes.size(),session->library.directory.string());
     gSession=std::move(session);
     armNativeObservations(player!=nullptr);
+    if(player){
+        log().info("F8: reconstructing built-in CPU model definitions for missing BlockEntity geometries");
+        captureBuiltInModelTemplates(*gMod);
+    }
     setCapturePreviewEnabled(player!=nullptr);
 }
 void registerStates(Session& s,Clock::time_point started) {

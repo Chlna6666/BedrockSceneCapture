@@ -27,6 +27,9 @@ struct NativeSceneDiagnostics {
     std::size_t distinctShapes{};
 };
 NativeSceneDiagnostics nativeSceneDiagnostics();
+// Recreate selected built-in CPU model definitions after source-box hooks are active.
+// Used only on explicit F8, never during mod startup.
+void captureBuiltInModelTemplates(ll::mod::NativeMod& mod);
 struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell, piston arm.
     std::array<bool,7> hooksInstalled{};
