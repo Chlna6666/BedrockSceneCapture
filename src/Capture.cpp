@@ -236,6 +236,11 @@ void begin(LocalPlayer* player) {
         log().warn("F8: client graphics resources are not initialized");
         return;
     }
+    if(player){
+        log().info("F8: initializing native hooks on demand (not during LeviLamina startup)");
+        if(!installNativeObservations(*gMod))
+            log().warn("F8: BlockTessellator hook unavailable; registry capture can still run");
+    }
     auto session=std::make_unique<Session>();
     session->library.directory=gMod->getDataDir()/"export"/"1.26.51.1";
     // Full native state/geometry enumeration works both in the menu and in

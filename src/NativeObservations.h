@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+namespace ll::mod {class NativeMod;}
 namespace bsc {
 struct NativeObservation {
     // The 27 network IDs refer to the same process-local block registry
@@ -27,7 +28,7 @@ struct ActorCaptureDiagnostics {
     std::vector<std::string> observedWithoutGeometry;
 };
 ActorCaptureDiagnostics actorCaptureDiagnostics();
-bool installNativeObservations();
+bool installNativeObservations(ll::mod::NativeMod& mod);
 void uninstallNativeObservations();
 void armNativeObservations(bool enabled);
 std::vector<NativeObservation> takeNativeObservations();

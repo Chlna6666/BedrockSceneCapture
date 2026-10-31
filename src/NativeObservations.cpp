@@ -2,6 +2,7 @@
 #include "NativeCoordinates.h"
 #include "Preview.h"
 #include "ll/api/memory/Hook.h"
+#include "ll/api/mod/NativeMod.h"
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
@@ -564,16 +565,45 @@ bool installedPartAdd{},installedPartLoad{};
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
      installedBed{},installedShulker{},installedBell{};
 }
-bool installNativeObservations(){
-    installedPartAdd=BSCPartAddBoxHook::hook()==0;
-    installedPartLoad=BSCPartLoadBoxesHook::hook()==0;
-    installedWorld=BSCNativeBlockHook::hook()==0;
-    installedChest=BSCChestModelHook::hook()==0;
-    installedSign=BSCSignModelHook::hook()==0;
-    installedHanging=BSCHangingSignModelHook::hook()==0;
-    installedBed=BSCBedModelHook::hook()==0;
-    installedShulker=BSCShulkerModelHook::hook()==0;
-    installedBell=BSCBellModelHook::hook()==0;
+bool installNativeObservations(ll::mod::NativeMod& mod){
+    // Run only on an explicit in-world F8 request, never under mod enable.
+    // Log BEFORE each symbol resolution / patch so a stuck hook can be
+    // identified from the last durable message.
+    if(installedWorld)return true;
+    auto& logger=mod.getLogger();
+    auto install=[&](char const* label,bool& installed,auto patch){
+        logger.info("F8 native hook install BEGIN: {}",label);
+        installed=(patch()==0);
+        if(installed)logger.info("F8 native hook install OK: {}",label);
+        else logger.warn("F8 native hook install FAILED: {}",label);
+    };
+    // Core tessellation hook is installed first. Optional ModelPart hooks
+    // are last: they are the most invasive and were previously installed
+    // synchronously in LeviLamina's startup path.
+    install("BlockTessellator::tessellateInWorld",installedWorld,
+        []{return BSCNativeBlockHook::hook();});
+    install("ChestRenderer::render",installedChest,
+        []{return BSCChestModelHook::hook();});
+    install("SignRenderer::render",installedSign,
+        []{return BSCSignModelHook::hook();});
+    install("HangingSignRenderer::render",installedHanging,
+        []{return BSCHangingSignModelHook::hook();});
+    install("BedRenderer::render",installedBed,
+        []{return BSCBedModelHook::hook();});
+    install("ShulkerBoxRenderer::render",installedShulker,
+        []{return BSCShulkerModelHook::hook();});
+    install("BellBlockActorRenderer::render",installedBell,
+        []{return BSCBellModelHook::hook();});
+    install("ModelPart::addBox",installedPartAdd,
+        []{return BSCPartAddBoxHook::hook();});
+    install("ModelPart::loadBoxes",installedPartLoad,
+        []{return BSCPartLoadBoxesHook::hook();});
+    logger.info("F8 native hooks initialized: world={}, actors={}/6, source_box_hooks={}/2",
+        installedWorld,
+        static_cast<int>(installedChest)+static_cast<int>(installedSign)+
+        static_cast<int>(installedHanging)+static_cast<int>(installedBed)+
+        static_cast<int>(installedShulker)+static_cast<int>(installedBell),
+        static_cast<int>(installedPartAdd)+static_cast<int>(installedPartLoad));
     return installedWorld;
 }
 ActorCaptureDiagnostics actorCaptureDiagnostics(){
