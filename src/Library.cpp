@@ -285,6 +285,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         // re-triangulating, re-serializing and re-hashing the same object.
         std::map<Mesh const*,std::string> memoizedMeshes;
         std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,TriangleBindings> memoizedBindings;
+        std::map<std::vector<TextureBinding> const*,std::string> memoizedTextureTables;
         std::set<std::string> staticModelHashes;
         std::map<std::string,std::string> staticModelIndex;
         std::map<std::string, std::uint32_t> statuses;
@@ -374,15 +375,25 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ',' << block.visualBounds[3] << ',' << block.visualBounds[4] << ',' << block.visualBounds[5]
                    << "],\"atlas_uv\":[" << block.atlasUv[0] << ',' << block.atlasUv[1]
                    << ',' << block.atlasUv[2] << ',' << block.atlasUv[3] << ']'
-                   << ",\"texture_bindings\":[";
+                   << ",\"texture_bindings\":";
+            if(block.hasGeometryAlias){
+                blocks<<"[]";
+            }else{
+                auto key=block.textures.get();
+                auto cached=memoizedTextureTables.find(key);
+                if(cached==memoizedTextureTables.end()){
+                    std::ostringstream textureStream;
+                    textureStream.imbue(std::locale::classic());
+                    textureStream<<std::setprecision(std::numeric_limits<float>::max_digits10);
+                    textureStream<<'[';
             bool firstTexture=true;
             // Audio-only state aliases inherit the canonical model's face
             // texture bindings; repeating atlas tables for every note pitch
             // would waste far more space than the shared mesh itself.
-            if(!block.hasGeometryAlias)for(auto const& tex:block.textureBindings()){
-                if(!firstTexture)blocks<<',';
+            for(auto const& tex:block.textureBindings()){
+                if(!firstTexture)textureStream<<',';
                 firstTexture=false;
-                blocks << "{\"slot\":" << tex.slot
+                textureStream << "{\"slot\":" << tex.slot
                        << ",\"resource_alias\":" << quoted(tex.defaultName)
                        << ",\"carried_alias\":" << quoted(tex.carriedName)
                        << ",\"atlas_item\":" << quoted(tex.atlasItem)
@@ -397,9 +408,9 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 auto writeVariants=[&](std::vector<TextureUVVariant> const& atlasVariants){
                     bool firstUV=true;
                     for(auto const& variant:atlasVariants){
-                        if(!firstUV)blocks<<',';
+                        if(!firstUV)textureStream<<',';
                         firstUV=false;
-                        blocks << "{\"variant\":" << variant.variant
+                        textureStream << "{\"variant\":" << variant.variant
                                << ",\"frame\":" << variant.frame
                                << ",\"source_path\":" << quoted(variant.sourcePath)
                                << ",\"atlas_uv\":[" << variant.atlasUv[0] << ',' << variant.atlasUv[1]
@@ -410,13 +421,18 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     }
                 };
                 writeVariants(tex.variants);
-                blocks << "],\"carried_atlas_item\":" << quoted(tex.carriedAtlasItem)
+                textureStream << "],\"carried_atlas_item\":" << quoted(tex.carriedAtlasItem)
                        << ",\"carried_additive\":" << (tex.carriedAdditive?"true":"false")
                        << ",\"carried_atlas_variants\":[";
                 writeVariants(tex.carriedVariants);
-                blocks << "]}";
+                textureStream << "]}";
             }
-            blocks << "],\"variants\":[";
+                    textureStream<<']';
+                    cached=memoizedTextureTables.emplace(key,textureStream.str()).first;
+                }
+                blocks<<cached->second;
+            }
+            blocks << ",\"variants\":[";
             bool firstVariant=true;
             for (auto const& sample : block.samples) {
                 ++samples;
