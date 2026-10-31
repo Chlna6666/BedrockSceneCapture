@@ -75,6 +75,7 @@ void flushActorSegments(){
 std::atomic<std::uint64_t> partsCalled{},partsWithCpuGeometry{},partsWithValidTransform{},
     missingCpuGeometry{},discardedTransforms{},emittedSegments{};
 bool installed{};
+bool installedAtPosition{};
 
 bool finite(glm::vec3 const& v){
     return std::isfinite(v.x)&&std::isfinite(v.y)&&std::isfinite(v.z);
@@ -254,6 +255,16 @@ LL_TYPE_INSTANCE_HOOK(BSCActorPartWireHook,ll::memory::HookPriority::Normal,
     observePart(*this,screen,scale,boneToEntitySpaceMatrix);
     origin(screen,model,scale,hideParentBodyPart,count,boneToEntitySpaceMatrix);
 }
+// Some native BlockEntity models route directly through renderAtPosition,
+// never calling ModelPart::render. Observe the same native part while its
+// caller's world matrix is still valid. Validation discards bad transforms.
+LL_TYPE_INSTANCE_HOOK(BSCActorPartAtPositionWireHook,ll::memory::HookPriority::Normal,
+    ModelPart,&ModelPart::renderAtPosition,void,
+    ScreenContext& screen,Model& model,Vec3 const& position,float scale,
+    bool hideParentBodyPart,uint count,Matrix boneToEntitySpaceMatrix){
+    observePart(*this,screen,scale,boneToEntitySpaceMatrix);
+    origin(screen,model,position,scale,hideParentBodyPart,count,boneToEntitySpaceMatrix);
+}
 } // namespace
 ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,
                                          BlockActorRenderData const& data)
@@ -360,15 +371,26 @@ bool installUniversalActorDataHook(ll::mod::NativeMod& mod){
     return true;
 }
 bool installActorWireframePartHook(ll::mod::NativeMod& mod){
-    if(installed)return true;
-    mod.getLogger().info("F7 native BlockEntity part hook BEGIN: ModelPart::render");
-    installed=(BSCActorPartWireHook::hook()==0);
-    if(installed)mod.getLogger().info("F7 native BlockEntity part hook OK");
-    else mod.getLogger().warn("F7 native BlockEntity part hook unavailable");
-    return installed;
+    if(installed && installedAtPosition)return true;
+    if(!installed){
+        mod.getLogger().info("F7/F8 BlockEntity ModelPart::render hook BEGIN");
+        installed=(BSCActorPartWireHook::hook()==0);
+        mod.getLogger().info("F7/F8 BlockEntity ModelPart::render hook {}",installed?"OK":"FAILED");
+    }
+    if(!installedAtPosition){
+        mod.getLogger().info("F7/F8 BlockEntity ModelPart::renderAtPosition hook BEGIN");
+        installedAtPosition=(BSCActorPartAtPositionWireHook::hook()==0);
+        mod.getLogger().info("F7/F8 BlockEntity ModelPart::renderAtPosition hook {}",
+                             installedAtPosition?"OK":"FAILED");
+    }
+    return installed || installedAtPosition;
 }
 void uninstallActorWireframePartHook(){
     if(installed){BSCActorPartWireHook::unhook();installed=false;}
+    if(installedAtPosition){
+        BSCActorPartAtPositionWireHook::unhook();
+        installedAtPosition=false;
+    }
     if(dataHooksInstalled){
         BSCActorDataDtorWireHook::unhook();
         BSCActorDataCtorWireHook::unhook();
