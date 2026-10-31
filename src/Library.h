@@ -55,6 +55,9 @@ struct BlockResource {
     int renderLayer{-1};
     bool blockEntity{};
     int blockActorType{};
+    // Expected native renderer model families. A family is only treated as
+    // captured when the corresponding model exists in entities.json.
+    std::vector<std::string> actorModelKeys;
     bool air{};
     int nativeShape{-1};
     std::string geometryContext{"none"};
