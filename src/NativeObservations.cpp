@@ -43,13 +43,13 @@ namespace {
 std::atomic_bool armed{false};
 std::mutex mutex;
 struct IdHash {
-    std::size_t operator()(std::array<std::uint32_t,29> const& values) const noexcept {
+    std::size_t operator()(std::array<std::uint32_t,30> const& values) const noexcept {
         std::size_t h=0x9e3779b9u;
         for(auto v:values)h ^= static_cast<std::size_t>(v)+0x9e3779b9u+(h<<6)+(h>>2);
         return h;
     }
 };
-std::unordered_set<std::array<std::uint32_t,29>,IdHash> seen;
+std::unordered_set<std::array<std::uint32_t,30>,IdHash> seen;
 std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
 // Capture native box inputs at model construction, before their CPU Cube
@@ -64,6 +64,8 @@ constexpr std::size_t MaxDistinctScenes=12288;
 // A per-state quota distributes native coverage across more block families.
 constexpr std::size_t MaxDistinctPerShape=4096;
 constexpr std::size_t MaxDistinctPerState=12;
+constexpr std::size_t MaxFullBoundsBlockSamples=768;
+std::size_t fullBoundsBlockSamples{};
 std::unordered_map<int,std::size_t> shapesObserved;
 std::unordered_map<std::uint32_t,std::size_t> statesObserved;
 std::unordered_map<int,std::size_t> shapesRejected;
@@ -75,18 +77,15 @@ std::unordered_map<std::string,std::chrono::steady_clock::time_point> actorLastA
 constexpr std::size_t MaxTotalVertices=2'000'000;
 std::size_t recordedVertices{};
 constexpr std::size_t MaxNativeVertices=8192;
-bool requiredWorldShape(BlockGraphics const& gfx){
-    // Never filter a non-cube just because its BlockShape is missing from a
-    // hand-written whitelist: crops, plants, composters, piston heads and
-    // many data-driven shapes otherwise get zero native samples.
-    if(gfx.mBlockShape!=BlockShape::Block)return true;
-    // Full unit cubes already have a registry geometry candidate. Keep the
-    // native F8 observation budget for nontrivial forms. This is an
-    // optimization ONLY, not proof that the shape is a true opaque cube.
+bool fullBoundsCubeCandidate(BlockGraphics const& gfx){
+    if(gfx.mBlockShape!=BlockShape::Block)return false;
     auto const& box=gfx.mVisualShape.get();
-    return !(box.min.x==0.f&&box.min.y==0.f&&box.min.z==0.f&&
-             box.max.x==1.f&&box.max.y==1.f&&box.max.z==1.f);
+    return box.min.x==0.f && box.min.y==0.f && box.min.z==0.f &&
+           box.max.x==1.f && box.max.y==1.f && box.max.z==1.f;
 }
+// BlockShape::Block and a 1x1x1 *visual bound* do NOT prove that a block
+// tessellates as a complete six-face cube. Keep a separately bounded sample
+// budget for those candidates, but do not exclude them from F8 entirely.
 bool mayVaryByPosition(BlockShape shape){
     // Crossed plants may have deterministic per-position offsets or varying
     // orientation even with identical block state and 3x3x3 neighborhood.
@@ -370,7 +369,8 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     if(!armed.load(std::memory_order_relaxed))return;
     tessellatorCalls.fetch_add(1,std::memory_order_relaxed);
     auto const* gfx=BlockGraphics::getForBlock(block);
-    if(!gfx || !requiredWorldShape(*gfx))return;
+    if(!gfx)return;
+    bool const fullBoundsCandidate=fullBoundsCubeCandidate(*gfx);
     eligibleCalls.fetch_add(1,std::memory_order_relaxed);
     auto& raw=tess.mMeshData.get();
     auto const& points=raw.mPositions.get();
@@ -394,19 +394,21 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
                 ids[next++]=region->getBlock(BlockPos{
                     pos.x+dx,pos.y+dy,pos.z+dz}).mNetworkId;
             }
-    std::array<std::uint32_t,29> sceneKey{};
+    std::array<std::uint32_t,30> sceneKey{};
     std::copy(ids.begin(),ids.end(),sceneKey.begin());
     bool const positionVariant=mayVaryByPosition(gfx->mBlockShape);
     if(positionVariant){
         sceneKey[27]=static_cast<std::uint32_t>(pos.x);
-        sceneKey[28]=static_cast<std::uint32_t>(pos.z);
+        sceneKey[28]=static_cast<std::uint32_t>(pos.y);
+        sceneKey[29]=static_cast<std::uint32_t>(pos.z);
     }
     std::unique_lock lock(mutex,std::try_to_lock);
     auto const shape=static_cast<int>(gfx->mBlockShape);
     if(!lock.owns_lock())return;
     if(seen.size()>=MaxDistinctScenes||
        shapesObserved[shape]>=MaxDistinctPerShape||
-       statesObserved[block.mNetworkId]>=MaxDistinctPerState||
+       statesObserved[block.mNetworkId]>=(fullBoundsCandidate?4:MaxDistinctPerState)||
+       (fullBoundsCandidate && fullBoundsBlockSamples>=MaxFullBoundsBlockSamples)||
        recordedVertices+points.size()-fromPos>MaxTotalVertices||
        !seen.emplace(sceneKey).second)return;
     Mesh mesh;
@@ -450,6 +452,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     recordedVertices+=mesh.vertices.size();
     ++shapesObserved[shape];
     ++statesObserved[block.mNetworkId];
+    if(fullBoundsCandidate)++fullBoundsBlockSamples;
     acceptedCalls.fetch_add(1,std::memory_order_relaxed);
     addCapturePreview(pos,mesh);
     pending.push_back(NativeObservation{
@@ -766,6 +769,7 @@ void clearNativeObservations(){
     std::lock_guard lock(mutex);
     seen.clear();
     recordedVertices=0;
+    fullBoundsBlockSamples=0;
     shapesObserved.clear();
     statesObserved.clear();
     shapesRejected.clear();
