@@ -407,9 +407,10 @@ double chunkCameraDistanceSq(ChunkWire const& chunk,Vec3 const& camera){
     double const dz=static_cast<double>(chunk.z)*16.0+8.0-camera.z;
     return dx*dx+dz*dz;
 }
-void render(BaseActorRenderContext& ctx){
-    if(!gPreviewEnabled.load(std::memory_order_relaxed) &&
-       !gCapturePreviewEnabled.load(std::memory_order_relaxed))return;
+// F7 and F8 draw independently. F8 must not require a populated F7 chunk
+// queue or resources initialized by the F7 updater.
+void render(BaseActorRenderContext& ctx,bool drawF7,bool drawF8){
+    if(!drawF7&&!drawF8)return;
     auto* level=ctx.mClientInstance.getLevelRenderer();
     if(!level||!level->mLevelRendererPlayer)return;
     auto const& material=level->mLevelRendererPlayer->mOutlineSelectionMaterial.get();
@@ -428,6 +429,7 @@ void render(BaseActorRenderContext& ctx){
         shader.dirty=true;
     };
     try {
+        if(drawF7){
         // Ordered map iteration has no relation to camera distance.
         // Upload the closest visible, not-yet-buffered chunk first.
         ChunkWire* candidate=nullptr;
@@ -552,7 +554,8 @@ void render(BaseActorRenderContext& ctx){
             chunk.gpu->renderMesh(ctx.mScreenContext,material,texture,0,
                 chunk.gpu->mVertexCount.get().value_or(0u),empty.get(),nullptr);
         }
-        if(gCapturePreviewEnabled.load(std::memory_order_relaxed)){
+        } // F7 drawing
+        if(drawF8){
             std::lock_guard lock(gCaptureMutex);
             auto const service=ctx.mScreenContext.tessellator.mBufferResourceService.lock();
             if(gCaptureService.lock()!=service){
@@ -605,7 +608,7 @@ void render(BaseActorRenderContext& ctx){
 // F7 dedicated BlockEntity pass. Lines are derived from the live native
 // ModelPart::render transform while its original BlockActor renderer runs.
 // No collision box, BlockShape proxy or guessed facing is rendered here.
-void renderActorWireframe(BaseActorRenderContext& ctx){
+void renderActorWireframe(BaseActorRenderContext& ctx,bool drawRed){
     auto segments=takeActorWireframeSegments();
     bool const f7=gPreviewEnabled.load(std::memory_order_relaxed);
     bool const f8=gCapturePreviewEnabled.load(std::memory_order_relaxed);
@@ -646,8 +649,8 @@ void renderActorWireframe(BaseActorRenderContext& ctx){
     auto const previous=shader.color.get();
     // F8 red = live BlockEntity geometry; F7 amber = same native model
     // visualized independently from the ordinary cyan block wireframe.
-    shader.color=f8?mce::Color{1.f,.18f,.24f,1.f}:
-                    mce::Color{1.f,.69f,.14f,1.f};
+    shader.color=drawRed?mce::Color{1.f,.18f,.24f,1.f}:
+                         mce::Color{1.f,.69f,.14f,1.f};
     shader.dirty=true;
     using Capture=decltype(dragon::RenderMetadata::mOffscreenCaptureDescription);
     static Capture empty{};
@@ -692,15 +695,22 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
         updateActorWireframeCamera(cameraPosition(ctx));
     origin(ctx,alpha);
     try {
-        if(!alpha) {
+        bool const f7=gPreviewEnabled.load(std::memory_order_relaxed);
+        bool const f8=gCapturePreviewEnabled.load(std::memory_order_relaxed);
+        if(!alpha){
             {std::lock_guard guard(gResourceMutex);
              gResource=ctx.mScreenContext.tessellator.mBufferResourceService;}
-            update(ctx);
+            if(f7)update(ctx);
+            // F8 is an autonomous opaque-pass overlay: it must render even
+            // when F7 was never started and no F7 chunks are cached.
+            if(f8){
+                renderActorWireframe(ctx,true);
+                ::bsc::render(ctx,false,true);
+            }
+        }else if(f7){
+            renderActorWireframe(ctx,false);
+            ::bsc::render(ctx,true,false);
         }
-        if(gPreviewEnabled.load(std::memory_order_relaxed)||
-           gCapturePreviewEnabled.load(std::memory_order_relaxed))
-            renderActorWireframe(ctx);
-        if(alpha)::bsc::render(ctx);
     }catch(std::exception const& e){
         OutputDebugStringA(("BSC preview disabled after render exception: "
                             +std::string(e.what())+"\n").c_str());
