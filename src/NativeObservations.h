@@ -28,8 +28,8 @@ struct NativeSceneDiagnostics {
 };
 NativeSceneDiagnostics nativeSceneDiagnostics();
 struct ActorCaptureDiagnostics {
-    // chest, standing sign, hanging sign, bed, shulker box, bell.
-    std::array<bool,6> hooksInstalled{};
+    // chest, standing sign, hanging sign, bed, shulker box, bell, piston arm.
+    std::array<bool,7> hooksInstalled{};
     std::size_t capturedModels{};
     bool sourceAddBoxHook{};
     bool sourceLoadBoxesHook{};

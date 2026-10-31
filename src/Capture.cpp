@@ -211,10 +211,11 @@ void finish(bool cancelled) {
                sceneStatus.acceptedCalls,sceneStatus.distinctBlockStates,
                sceneStatus.distinctShapes);
     auto actorStatus=actorCaptureDiagnostics();
-    log().info("F8 BlockActor hooks: chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}; captured_models={}, observed_without_geometry={}",
+    log().info("F8 BlockActor hooks: chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
                actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
                actorStatus.hooksInstalled[2],actorStatus.hooksInstalled[3],
                actorStatus.hooksInstalled[4],actorStatus.hooksInstalled[5],
+               actorStatus.hooksInstalled[6],
                actorStatus.capturedModels,actorStatus.observedWithoutGeometry.size());
     log().info("F8 native box construction hooks: add_box={}, load_boxes={}, retained_parts={}, source_boxes={}",
                actorStatus.sourceAddBoxHook,actorStatus.sourceLoadBoxesHook,
@@ -350,6 +351,8 @@ void registerStates(Session& s,Clock::time_point started) {
             entry.actorModelKeys={"shulker_box"};break;
         case BlockActorType::Bell:
             entry.actorModelKeys={"bell"};break;
+        case BlockActorType::PistonArm:
+            entry.actorModelKeys={"piston_arm"};break;
         default:break;
         }
         if(auto const* gfx=BlockGraphics::getForBlock(*block)){
@@ -425,6 +428,9 @@ void registerStates(Session& s,Clock::time_point started) {
             }
             entry.textures=cached->second;
             entry.nativeShape=static_cast<int>(gfx->mBlockShape);
+            if(gfx->mBlockShape==BlockShape::Piston &&
+               entry.actorModelKeys.empty())
+                entry.actorModelKeys={"piston_arm"};
             switch(gfx->mBlockShape){
             case BlockShape::Water:
             case BlockShape::BubbleColumn:

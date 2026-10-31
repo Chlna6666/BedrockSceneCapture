@@ -20,6 +20,7 @@
 #include "mc/client/renderer/blockactor/BedRenderer.h"
 #include "mc/client/renderer/blockactor/ShulkerBoxRenderer.h"
 #include "mc/client/renderer/blockactor/BellBlockActorRenderer.h"
+#include "mc/client/renderer/blockactor/PistonBlockActorRenderer.h"
 #include <atomic>
 #include <array>
 #include <algorithm>
@@ -604,9 +605,18 @@ LL_TYPE_INSTANCE_HOOK(BSCBellModelHook,ll::memory::HookPriority::Normal,
     auto const& model=this->mBell.get();
     recordActor("bell",model,{&model.mBellBody.get(),&model.mBellBase.get()});
 }
+LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
+    PistonBlockActorRenderer,&PistonBlockActorRenderer::$render,void,
+    BaseActorRenderContext& ctx,BlockActorRenderData& data) {
+    origin(ctx,data);
+    auto const& model=this->mPistonArm.get();
+    recordActor("piston_arm",model,{
+        &model.mArmBase.get(),&model.mArm.get(),&model.mFront.get()
+    });
+}
 bool installedPartAdd{},installedPartLoad{};
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
-     installedBed{},installedShulker{},installedBell{};
+     installedBed{},installedShulker{},installedBell{},installedPiston{};
 }
 bool installNativeObservations(ll::mod::NativeMod& mod){
     // Run only on an explicit in-world F8 request, never under mod enable.
@@ -637,15 +647,18 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         []{return BSCShulkerModelHook::hook();});
     install("BellBlockActorRenderer::render",installedBell,
         []{return BSCBellModelHook::hook();});
+    install("PistonBlockActorRenderer::render",installedPiston,
+        []{return BSCPistonArmModelHook::hook();});
     install("ModelPart::addBox",installedPartAdd,
         []{return BSCPartAddBoxHook::hook();});
     install("ModelPart::loadBoxes",installedPartLoad,
         []{return BSCPartLoadBoxesHook::hook();});
-    logger.info("F8 native hooks initialized: world={}, actors={}/6, source_box_hooks={}/2",
+    logger.info("F8 native hooks initialized: world={}, actors={}/7, source_box_hooks={}/2",
         installedWorld,
         static_cast<int>(installedChest)+static_cast<int>(installedSign)+
         static_cast<int>(installedHanging)+static_cast<int>(installedBed)+
-        static_cast<int>(installedShulker)+static_cast<int>(installedBell),
+        static_cast<int>(installedShulker)+static_cast<int>(installedBell)+
+        static_cast<int>(installedPiston),
         static_cast<int>(installedPartAdd)+static_cast<int>(installedPartLoad));
     return installedWorld;
 }
@@ -662,7 +675,7 @@ NativeSceneDiagnostics nativeSceneDiagnostics(){
 ActorCaptureDiagnostics actorCaptureDiagnostics(){
     ActorCaptureDiagnostics diagnostics;
     diagnostics.hooksInstalled={installedChest,installedSign,installedHanging,
-                                installedBed,installedShulker,installedBell};
+                                installedBed,installedShulker,installedBell,installedPiston};
     std::lock_guard lock(mutex);
     diagnostics.capturedModels=recordedActorLabels.size();
     diagnostics.sourceAddBoxHook=installedPartAdd;
@@ -718,6 +731,7 @@ void uninstallNativeObservations(){
     if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}
     if(installedPartAdd){BSCPartAddBoxHook::unhook();installedPartAdd=false;}
     {std::lock_guard lock(sourceBoxesMutex);sourceBoxes.clear();}
+    if(installedPiston){BSCPistonArmModelHook::unhook();installedPiston=false;}
     if(installedBell){BSCBellModelHook::unhook();installedBell=false;}
     if(installedShulker){BSCShulkerModelHook::unhook();installedShulker=false;}
     if(installedBed){BSCBedModelHook::unhook();installedBed=false;}
