@@ -83,6 +83,7 @@ std::mutex gCaptureMutex;
 using CaptureKey=std::tuple<int,int,int>;
 std::map<CaptureKey,ChunkWire> gCaptureSections;
 std::size_t gCaptureSegments{};
+std::set<std::array<int,3>> gCapturedActorPositions;
 std::weak_ptr<mce::BufferResourceService> gCaptureService;
 std::mutex gResourceMutex;
 std::weak_ptr<mce::BufferResourceService> gResource;
@@ -706,6 +707,7 @@ void setCapturePreviewEnabled(bool enabled){
         std::lock_guard lock(gCaptureMutex);
         gCaptureSections.clear();
         gCaptureSegments=0;
+        gCapturedActorPositions.clear();
         gCaptureService.reset();
     }
 }
@@ -733,6 +735,51 @@ void addCapturePreview(BlockPos const& pos,Mesh const& mesh){
                             MaxCaptureSegments-gCaptureSegments)));
     gCaptureSegments+=section.lines.size()-before;
     if(section.lines.size()!=before){section.gpu.reset();section.ready=true;}
+}
+void addCaptureActorPreview(BlockPos const& pos,
+                            std::span<ActorWireSegment const> segments){
+    if(!gCapturePreviewEnabled.load(std::memory_order_acquire)||segments.empty())return;
+    std::unique_lock lock(gCaptureMutex,std::try_to_lock);
+    if(!lock.owns_lock()||gCaptureSegments>=MaxCaptureSegments)return;
+    std::array<int,3> const actorKey{pos.x,pos.y,pos.z};
+    if(gCapturedActorPositions.contains(actorKey))return;
+    CaptureKey const key{floorChunk(pos.x),floorChunk(pos.y),floorChunk(pos.z)};
+    auto it=gCaptureSections.find(key);
+    if(it==gCaptureSections.end()){
+        if(gCaptureSections.size()>=MaxCaptureSections)return;
+        it=gCaptureSections.try_emplace(key).first;
+        it->second.x=std::get<0>(key);
+        it->second.z=std::get<2>(key);
+        it->second.minY=std::get<1>(key)*16;
+        it->second.maxY=it->second.minY+16;
+    }
+    auto& section=it->second;
+    auto const room=std::min(MaxCaptureSectionSegments-section.lines.size(),
+                              MaxCaptureSegments-gCaptureSegments);
+    auto const take=std::min(room,segments.size());
+    if(take==0)return;
+    std::size_t added{};
+    float const baseX=static_cast<float>(section.x*16);
+    float const baseY=static_cast<float>(section.minY);
+    float const baseZ=static_cast<float>(section.z*16);
+    for(std::size_t i=0;i<segments.size() && added<take;++i){
+        auto const& wire=segments[i];
+        auto local=[](std::array<float,3> const& p,float x,float y,float z){
+            return Vec3{p[0]-x,p[1]-y,p[2]-z};
+        };
+        auto a=local(wire.from,baseX,baseY,baseZ);
+        auto b=local(wire.to,baseX,baseY,baseZ);
+        if(!std::isfinite(a.x)||!std::isfinite(a.y)||!std::isfinite(a.z)||
+           !std::isfinite(b.x)||!std::isfinite(b.y)||!std::isfinite(b.z))continue;
+        section.lines.push_back({a,b});
+        ++added;
+    }
+    if(added){
+        gCaptureSegments+=added;
+        gCapturedActorPositions.insert(actorKey);
+        section.gpu.reset();
+        section.ready=true;
+    }
 }
 std::weak_ptr<mce::BufferResourceService> renderBufferService(){
     std::lock_guard guard(gResourceMutex);

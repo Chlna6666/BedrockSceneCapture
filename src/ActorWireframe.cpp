@@ -288,8 +288,17 @@ ActorWireframeScope::ActorWireframeScope(BlockPos const& position,
 }
 ActorWireframeScope::~ActorWireframeScope(){
     if(active_ && !contexts.empty()){
+        auto const world=contexts.back().world;
         contexts.pop_back();
-        if(contexts.empty())flushActorSegments();
+        if(contexts.empty()){
+            if(gCapturePreviewEnabled.load(std::memory_order_acquire)&&!lines.empty()){
+                BlockPos const pos{static_cast<int>(world.x),
+                                   static_cast<int>(world.y),
+                                   static_cast<int>(world.z)};
+                addCaptureActorPreview(pos,lines);
+            }
+            flushActorSegments();
+        }
     }
 }
 void updateActorWireframeCamera(Vec3 const& camera){
