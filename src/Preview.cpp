@@ -447,11 +447,11 @@ void render(BaseActorRenderContext& ctx){
         // camera translation is applied exactly once.
         auto const& view=ctx.mScreenContext.camera.viewMatrixStack.get().top()._m.get();
         glm::vec3 const cameraWorld{camera.x,camera.y,camera.z};
-        glm::vec3 const cameraInView=view*glm::vec4(cameraWorld,1.f);
-        glm::vec3 const originInView=view*glm::vec4(0.f,0.f,0.f,1.f);
+        glm::vec3 const cameraInView{view*glm::vec4(cameraWorld,1.f)};
+        glm::vec3 const originInView{view*glm::vec4(0.f,0.f,0.f,1.f)};
         bool const viewAlreadySubtractsCamera=
-            glm::all(glm::isfinite(cameraInView)) &&
-            glm::all(glm::isfinite(originInView)) &&
+            std::isfinite(cameraInView.x)&&std::isfinite(cameraInView.y)&&std::isfinite(cameraInView.z) &&
+            std::isfinite(originInView.x)&&std::isfinite(originInView.y)&&std::isfinite(originInView.z) &&
             glm::length(cameraInView)+0.5f<glm::length(originInView);
         for(auto& [key,chunk]:gChunks){
             if(!chunk.ready || !chunk.gpu || !chunk.gpu->isValid() ||
