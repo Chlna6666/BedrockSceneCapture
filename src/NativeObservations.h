@@ -23,6 +23,7 @@ struct NativeSceneDiagnostics {
     std::uint64_t tessellatorCalls{};
     std::uint64_t eligibleCalls{};
     std::uint64_t acceptedCalls{};
+    std::uint64_t rejectedQuota{},rejectedDuplicate{},rejectedLockBusy{};
     std::size_t distinctBlockStates{};
     std::size_t distinctShapes{};
 };

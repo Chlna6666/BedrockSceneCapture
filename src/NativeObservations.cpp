@@ -85,6 +85,7 @@ std::unordered_map<int,std::size_t> shapesRejected;
 std::atomic<std::uint64_t> tessellatorCalls{0};
 std::atomic<std::uint64_t> eligibleCalls{0};
 std::atomic<std::uint64_t> acceptedCalls{0};
+std::atomic<std::uint64_t> rejectedQuota{},rejectedDuplicate{},rejectedLockBusy{};
 std::unordered_set<std::string> recordedActorLabels;
 std::unordered_map<std::string,std::chrono::steady_clock::time_point> actorLastAttempt;
 constexpr std::size_t MaxTotalVertices=2'000'000;
@@ -391,6 +392,28 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     if(!gfx)return;
     bool const fullBoundsCandidate=fullBoundsCubeCandidate(*gfx);
     eligibleCalls.fetch_add(1,std::memory_order_relaxed);
+    auto const shape=static_cast<int>(gfx->mBlockShape);
+    // Most of the renderer's repeat calls target already-saturated states.
+    // Check quotas before reading 26 neighbors and copying native vertices.
+    // Never trust this preflight as authoritative: quotas are rechecked
+    // under the final capture lock after the full neighborhood is read.
+    {
+        std::unique_lock quick(mutex,std::try_to_lock);
+        if(quick.owns_lock()){
+            auto const stateIt=statesObserved.find(block.mNetworkId);
+            auto const shapeIt=shapesObserved.find(shape);
+            if((stateIt!=statesObserved.end() &&
+                stateIt->second>=(fullBoundsCandidate?4:MaxDistinctPerState)) ||
+               (shapeIt!=shapesObserved.end() &&
+                shapeIt->second>=MaxDistinctPerShape) ||
+               (fullBoundsCandidate && fullBoundsBlockSamples>=MaxFullBoundsBlockSamples)||
+               seen.size()>=MaxDistinctScenes||
+               recordedVertices>=MaxTotalVertices){
+                rejectedQuota.fetch_add(1,std::memory_order_relaxed);
+                return;
+            }
+        }
+    }
     auto& raw=tess.mMeshData.get();
     auto const& points=raw.mPositions.get();
     if(fromPos>points.size() || points.size()==fromPos ||
@@ -422,14 +445,22 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
         sceneKey[29]=static_cast<std::uint32_t>(pos.z);
     }
     std::unique_lock lock(mutex,std::try_to_lock);
-    auto const shape=static_cast<int>(gfx->mBlockShape);
-    if(!lock.owns_lock())return;
+    if(!lock.owns_lock()){
+        rejectedLockBusy.fetch_add(1,std::memory_order_relaxed);
+        return;
+    }
     if(seen.size()>=MaxDistinctScenes||
        shapesObserved[shape]>=MaxDistinctPerShape||
        statesObserved[block.mNetworkId]>=(fullBoundsCandidate?4:MaxDistinctPerState)||
        (fullBoundsCandidate && fullBoundsBlockSamples>=MaxFullBoundsBlockSamples)||
-       recordedVertices+points.size()-fromPos>MaxTotalVertices||
-       !seen.emplace(sceneKey).second)return;
+       recordedVertices+points.size()-fromPos>MaxTotalVertices){
+        rejectedQuota.fetch_add(1,std::memory_order_relaxed);
+        return;
+    }
+    if(!seen.emplace(sceneKey).second){
+        rejectedDuplicate.fetch_add(1,std::memory_order_relaxed);
+        return;
+    }
     Mesh mesh;
     mesh.primitive=static_cast<std::uint32_t>(raw.mMode);
     mesh.layer=static_cast<std::uint32_t>(gfx->mRenderLayer);
@@ -934,6 +965,9 @@ NativeSceneDiagnostics nativeSceneDiagnostics(){
     out.tessellatorCalls=tessellatorCalls.load(std::memory_order_relaxed);
     out.eligibleCalls=eligibleCalls.load(std::memory_order_relaxed);
     out.acceptedCalls=acceptedCalls.load(std::memory_order_relaxed);
+    out.rejectedQuota=rejectedQuota.load(std::memory_order_relaxed);
+    out.rejectedDuplicate=rejectedDuplicate.load(std::memory_order_relaxed);
+    out.rejectedLockBusy=rejectedLockBusy.load(std::memory_order_relaxed);
     std::lock_guard lock(mutex);
     out.distinctBlockStates=statesObserved.size();
     out.distinctShapes=shapesObserved.size();
@@ -975,6 +1009,9 @@ void clearNativeObservations(){
     tessellatorCalls.store(0,std::memory_order_relaxed);
     eligibleCalls.store(0,std::memory_order_relaxed);
     acceptedCalls.store(0,std::memory_order_relaxed);
+    rejectedQuota.store(0,std::memory_order_relaxed);
+    rejectedDuplicate.store(0,std::memory_order_relaxed);
+    rejectedLockBusy.store(0,std::memory_order_relaxed);
     recordedActorLabels.clear();
     actorLastAttempt.clear();
     pending.clear();

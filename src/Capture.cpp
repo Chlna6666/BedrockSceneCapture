@@ -206,10 +206,11 @@ void finish(bool cancelled) {
     collectNativeSamples(*gSession);
     gSession->library.cancelled=cancelled;
     auto const sceneStatus=nativeSceneDiagnostics();
-    log().info("F8 native-scene coverage: tessellator_calls={}, eligible={}, accepted={}, distinct_block_states={}, distinct_shapes={}",
+    log().info("F8 native-scene coverage: tessellator_calls={}, eligible={}, accepted={}, distinct_block_states={}, distinct_shapes={}, rejected_quota={}, rejected_duplicate={}, rejected_lock_busy={}",
                sceneStatus.tessellatorCalls,sceneStatus.eligibleCalls,
                sceneStatus.acceptedCalls,sceneStatus.distinctBlockStates,
-               sceneStatus.distinctShapes);
+               sceneStatus.distinctShapes,sceneStatus.rejectedQuota,
+               sceneStatus.rejectedDuplicate,sceneStatus.rejectedLockBusy);
     auto actorStatus=actorCaptureDiagnostics();
     log().info("F8 BlockActor hooks: chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
                actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
