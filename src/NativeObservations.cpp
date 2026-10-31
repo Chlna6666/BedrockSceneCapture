@@ -169,9 +169,9 @@ std::string modelJson(Model const& model,
                    normals.size()<=65536 && uvs.size()<=65536 &&
                    tris.size()+quads.size()<=65536;
         auto validVertex=[&](Geometry::NodeVertex const& v){
-            return v.mPositionIndex.get()<positions.size() &&
-                   (normals.empty()||v.mNormalIndex.get()<normals.size()) &&
-                   (uvs.empty()||v.mUVIndex.get()<uvs.size());
+            return v.mPositionIndex<positions.size() &&
+                   (normals.empty()||v.mNormalIndex<normals.size()) &&
+                   (uvs.empty()||v.mUVIndex<uvs.size());
         };
         if(valid){
             for(auto const& tri:tris)for(auto const& v:tri)
@@ -196,7 +196,7 @@ std::string modelJson(Model const& model,
                 if(i)o<<',';
                 vec2(o,uvs[i]);
             }
-            o<<"],\"uv_normalized\":"<<(poly.mAreUVsNormalized.get()?"true":"false");
+            o<<"],\"uv_normalized\":"<<(poly.mAreUVsNormalized?"true":"false");
             auto writeFaces=[&](auto const& faces){
                 o<<'[';
                 for(std::size_t i=0;i<faces.size();++i){
@@ -205,8 +205,8 @@ std::string modelJson(Model const& model,
                     for(std::size_t j=0;j<faces[i].size();++j){
                         if(j)o<<',';
                         auto const& v=faces[i][j];
-                        o<<'['<<v.mPositionIndex.get()<<','
-                         <<v.mNormalIndex.get()<<','<<v.mUVIndex.get()<<']';
+                        o<<'['<<v.mPositionIndex<<','
+                         <<v.mNormalIndex<<','<<v.mUVIndex<<']';
                     }
                     o<<']';
                 }
