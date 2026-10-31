@@ -87,3 +87,5 @@ F8 新增实际落盘的共享资源池，不再仅对独立 Mesh 计算几何�
 **兼容与体积**：迁移期保留完整 `meshes/` v1 文件和原有状态字段，因此本版本导出目录可能比之前更大。BMCBL 需要增加 v2 解析器并使用共享 GPU 几何缓冲，验证视觉一致后才能关闭 v1 输出并真正减少磁盘容量。`manifest.json` 含 `shared_geometry_pool_schema`、`shared_geometry_count`、`shared_appearance_count`、`shared_material_count` 和 `legacy_meshes_retained`。由于邻居规则、流体及专用 BlockEntity 尚未全量验证，导出继续标记 `complete=false`。
 
 验证新导出：`python tools/verify_model_library.py <F8-export-directory>`。校验每个资源的 SHA-256、引用与三角形/外观流对齐，但仍不能代替客户端的原生模型精确性比对。
+
+Geometry Pool v2-only：`legacy_meshes_retained=false`。旧版 `meshes/`、`mesh_refs`、内联 `texture_bindings` 不再输出，BMCBL 改由 `geometry_pool` 读取。模型覆盖率与规则支持仍需独立验证。
