@@ -365,6 +365,53 @@ def self_test():
         for name in ("blocks.json","manifest.json"):
             (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
         assert validate(p)["valid"],"face-local slot must be resolvable without atlas"
+        # Shared V2 fixture: exact position index and material bindings are
+        # independently hashed; deleting/mutating either must be detected.
+        geom={"schema":2,"topology":"triangles","precision":"exact_float32",
+              "coordinate_space":"block_local","winding_preserved":True,
+              "vertices":[[0,0,0],[0,1,0],[1,1,0]],
+              "triangles":[[0,1,2]]}
+        raw_geom=(json.dumps(geom,separators=(",",":"))+"\n").encode()
+        ghash=hashlib.sha256(raw_geom).hexdigest()
+        appearance={"schema":2,"geometry_ref":ghash,"render_layer":5,
+                    "corner_attributes":[[0,0,-1,0,0,4294967295],
+                        [0,0,-1,0,1,4294967295],[0,0,-1,1,1,4294967295]],
+                    "triangle_texture_slots":[2],
+                    "triangle_texture_variant_indices":[None]}
+        raw_appearance=(json.dumps(appearance,separators=(",",":"))+"\n").encode()
+        ahash=hashlib.sha256(raw_appearance).hexdigest()
+        gdir=p/"geometry_pool"/"geometry"
+        adir=p/"geometry_pool"/"appearance"
+        gdir.mkdir(parents=True)
+        adir.mkdir(parents=True)
+        (gdir/(ghash+".json")).write_bytes(raw_geom)
+        (adir/(ahash+".json")).write_bytes(raw_appearance)
+        examples["manifest.json"].update({
+            "shared_geometry_pool_schema":2,"shared_geometry_count":1,
+            "shared_appearance_count":1,"legacy_meshes_retained":True})
+        variant["shared_geometry_refs"]=[ghash]
+        variant["shared_appearance_refs"]=[ahash]
+        (p/"geometry_pool.json").write_text(json.dumps({
+            "schema":2,"legacy_meshes_retained":True,
+            "geometry":[ghash],"appearance":[ahash]}),encoding="utf-8")
+        for name in ("blocks.json","manifest.json"):
+            (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
+        assert validate(p)["valid"],"shared geometry pool v2 fixture invalid"
+        variant["shared_appearance_refs"]=[]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        assert "shared mesh reference count mismatch" in validate(p)["errors"]
+        variant["shared_appearance_refs"]=[ahash]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        (adir/(ahash+".json")).write_bytes(raw_appearance+b" ")
+        assert "shared appearance checksum mismatch" in validate(p)["errors"]
+        (adir/(ahash+".json")).write_bytes(raw_appearance)
+        variant.pop("shared_geometry_refs")
+        variant.pop("shared_appearance_refs")
+        for k in ("shared_geometry_pool_schema","shared_geometry_count",
+                  "shared_appearance_count","legacy_meshes_retained"):
+            examples["manifest.json"].pop(k)
+        for name in ("blocks.json","manifest.json"):
+            (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
         # No duplicated geometry is required for an audio-only pitch change:
         # preserve its BlockState but reference the original model by ID.
         state["name"]="minecraft:noteblock"
