@@ -1,5 +1,6 @@
 #include "NativeObservations.h"
 #include "NativeCoordinates.h"
+#include "Preview.h"
 #include "ll/api/memory/Hook.h"
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
@@ -380,6 +381,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     reconstructMissingNormals(mesh);
     recordedVertices+=mesh.vertices.size();
     ++shapesObserved[shape];
+    addCapturePreview(pos,mesh);
     pending.push_back(NativeObservation{ids,std::move(mesh)});
 }
 LL_TYPE_INSTANCE_HOOK(BSCNativeBlockHook,ll::memory::HookPriority::Normal,
