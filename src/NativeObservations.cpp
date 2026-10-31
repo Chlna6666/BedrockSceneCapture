@@ -25,6 +25,10 @@
 #include "mc/client/renderer/blockactor/ShulkerBoxRenderer.h"
 #include "mc/client/renderer/blockactor/BellBlockActorRenderer.h"
 #include "mc/client/renderer/blockactor/PistonBlockActorRenderer.h"
+#include "mc/client/renderer/blockactor/BannerRenderer.h"
+#include "mc/client/renderer/blockactor/DecoratedPotRenderer.h"
+#include "mc/client/renderer/blockactor/ConduitRenderer.h"
+#include "mc/client/renderer/blockactor/LecternRenderer.h"
 #include <atomic>
 #include <array>
 #include <algorithm>
@@ -710,9 +714,37 @@ LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
         &model.mArmBase.get(),&model.mArm.get(),&model.mFront.get()
     });
 }
+// F7-only renderer scopes for additional native BlockActor model families.
+// These share the live ModelPart observer; they do not claim export of
+// geometry for which the SDK exposes only opaque GPU buffers.
+LL_TYPE_INSTANCE_HOOK(BSCBannerWireHook,ll::memory::HookPriority::Normal,
+    BannerRenderer,&BannerRenderer::$render,void,
+    BaseActorRenderContext& ctx,BlockActorRenderData& data){
+    ActorWireframeScope scope{ctx,data};
+    origin(ctx,data);
+}
+LL_TYPE_INSTANCE_HOOK(BSCPotWireHook,ll::memory::HookPriority::Normal,
+    DecoratedPotRenderer,&DecoratedPotRenderer::$render,void,
+    BaseActorRenderContext& ctx,BlockActorRenderData& data){
+    ActorWireframeScope scope{ctx,data};
+    origin(ctx,data);
+}
+LL_TYPE_INSTANCE_HOOK(BSCConduitWireHook,ll::memory::HookPriority::Normal,
+    ConduitRenderer,&ConduitRenderer::$render,void,
+    BaseActorRenderContext& ctx,BlockActorRenderData& data){
+    ActorWireframeScope scope{ctx,data};
+    origin(ctx,data);
+}
+LL_TYPE_INSTANCE_HOOK(BSCLecternWireHook,ll::memory::HookPriority::Normal,
+    LecternRenderer,&LecternRenderer::$render,void,
+    BaseActorRenderContext& ctx,BlockActorRenderData& data){
+    ActorWireframeScope scope{ctx,data};
+    origin(ctx,data);
+}
 bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
-     installedBed{},installedShulker{},installedBell{},installedPiston{};
+     installedBed{},installedShulker{},installedBell{},installedPiston{},
+     installedBanner{},installedPot{},installedConduit{},installedLectern{};
 }
 void installActorRenderHooks(ll::mod::NativeMod& mod){
     auto& logger=mod.getLogger();
@@ -737,10 +769,20 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
         []{return BSCBellModelHook::hook();});
     install("PistonBlockActorRenderer::render",installedPiston,
         []{return BSCPistonArmModelHook::hook();});
+    install("BannerRenderer::render",installedBanner,
+        []{return BSCBannerWireHook::hook();});
+    install("DecoratedPotRenderer::render",installedPot,
+        []{return BSCPotWireHook::hook();});
+    install("ConduitRenderer::render",installedConduit,
+        []{return BSCConduitWireHook::hook();});
+    install("LecternRenderer::render",installedLectern,
+        []{return BSCLecternWireHook::hook();});
 }
 bool installActorWireframeObservations(ll::mod::NativeMod& mod){
-    bool const dispatcher=installActorDispatcherWireHook(mod);
-    if(!dispatcher)installActorRenderHooks(mod);
+    // The dispatcher overload requires a non-constant MSVC imported member
+    // pointer, which cannot be used by LL_TYPE_INSTANCE_HOOK. Hook each
+    // actual renderer thunk instead; these include exact BlockActorRenderData.
+    installActorRenderHooks(mod);
     return installActorWireframePartHook(mod);
 }
 bool installNativeObservations(ll::mod::NativeMod& mod){
@@ -915,6 +957,10 @@ void uninstallNativeObservations(){
     if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}
     if(installedPartAdd){BSCPartAddBoxHook::unhook();installedPartAdd=false;}
     {std::lock_guard lock(sourceBoxesMutex);sourceBoxes.clear();}
+    if(installedLectern){BSCLecternWireHook::unhook();installedLectern=false;}
+    if(installedConduit){BSCConduitWireHook::unhook();installedConduit=false;}
+    if(installedPot){BSCPotWireHook::unhook();installedPot=false;}
+    if(installedBanner){BSCBannerWireHook::unhook();installedBanner=false;}
     if(installedPiston){BSCPistonArmModelHook::unhook();installedPiston=false;}
     if(installedBell){BSCBellModelHook::unhook();installedBell=false;}
     if(installedShulker){BSCShulkerModelHook::unhook();installedShulker=false;}

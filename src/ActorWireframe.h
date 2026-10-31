@@ -30,7 +30,6 @@ struct ActorWireframeStats {
 };
 bool installActorWireframePartHook(ll::mod::NativeMod&);
 // The dispatcher includes renderers beyond the seven built-in F8 model hooks.
-bool installActorDispatcherWireHook(ll::mod::NativeMod&);
 void uninstallActorWireframePartHook();
 void beginActorWireframeFrame();
 std::vector<ActorWireSegment> takeActorWireframeSegments();
