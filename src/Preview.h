@@ -9,6 +9,7 @@ namespace bsc {
 struct Mesh;
 struct ActorWireSegment;
 extern std::atomic_bool gPreviewEnabled;
+extern std::atomic_bool gCapturePreviewEnabled;
 std::weak_ptr<mce::BufferResourceService> renderBufferService();
 // F8 overlay displays only geometries accepted by native scene observation.
 void setCapturePreviewEnabled(bool enabled);

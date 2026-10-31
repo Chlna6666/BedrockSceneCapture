@@ -53,6 +53,7 @@
 
 namespace bsc {
 std::atomic_bool gPreviewEnabled{false};
+std::atomic_bool gCapturePreviewEnabled{false};
 namespace {
 using Clock=std::chrono::steady_clock;
 using Key=std::pair<int,int>;
@@ -82,7 +83,6 @@ struct ChunkWire {
     std::unique_ptr<mce::Mesh> gpu;
     std::size_t gpuSegments{};
 };
-std::atomic_bool gCapturePreviewEnabled{false};
 std::mutex gCaptureMutex;
 using CaptureKey=std::tuple<int,int,int>;
 std::map<CaptureKey,ChunkWire> gCaptureSections;
