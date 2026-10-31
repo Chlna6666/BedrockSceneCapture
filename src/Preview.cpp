@@ -45,6 +45,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -62,6 +63,9 @@ constexpr unsigned MaxChunkMeshes=512;
 constexpr unsigned RefreshFrames=120;
 // Avoid endlessly re-tessellating unchanged chunks while the player is exploring.
 constexpr unsigned RebuildFrames=3600;
+constexpr std::size_t MaxCaptureSections=384;
+constexpr std::size_t MaxCaptureSegments=250000;
+constexpr std::size_t MaxCaptureSectionSegments=12000;
 
 struct ChunkWire {
     int x{},z{},minY{},maxY{};
@@ -72,6 +76,12 @@ struct ChunkWire {
     std::unique_ptr<mce::Mesh> gpu;
     std::size_t gpuSegments{};
 };
+std::atomic_bool gCapturePreviewEnabled{false};
+std::mutex gCaptureMutex;
+using CaptureKey=std::tuple<int,int,int>;
+std::map<CaptureKey,ChunkWire> gCaptureSections;
+std::size_t gCaptureSegments{};
+std::weak_ptr<mce::BufferResourceService> gCaptureService;
 std::mutex gResourceMutex;
 std::weak_ptr<mce::BufferResourceService> gResource;
 std::weak_ptr<mce::BufferResourceService> gBoundService;
@@ -160,7 +170,7 @@ int floorChunk(int blockCoord){
     auto n=static_cast<std::int64_t>(blockCoord);
     return static_cast<int>(n>=0?n/16:-((-n+15)/16));
 }
-void consume(ChunkWire& chunk,Mesh const& mesh,BlockPos const& blockPos) {
+void consume(ChunkWire& chunk,Mesh const& mesh,BlockPos const& blockPos,bool vertexMarks=true) {
     auto at=[&](std::uint32_t i)->Vec3{
         auto const& v=mesh.vertices[i];
         return {static_cast<float>(blockPos.x-chunk.x*16)+v.x,
@@ -200,7 +210,7 @@ void consume(ChunkWire& chunk,Mesh const& mesh,BlockPos const& blockPos) {
         break;
     default: break;
     }
-    for(std::size_t i=0;i<mesh.vertices.size() &&
+    if(vertexMarks)for(std::size_t i=0;i<mesh.vertices.size() &&
          gVertexMarks<MaxVertexMarksPerChunk && !chunk.truncated;++i)
         vertexMark(chunk,at(static_cast<std::uint32_t>(i)));
 }
@@ -387,7 +397,8 @@ double chunkCameraDistanceSq(ChunkWire const& chunk,Vec3 const& camera){
     return dx*dx+dz*dz;
 }
 void render(BaseActorRenderContext& ctx){
-    if(!gPreviewEnabled.load())return;
+    if(!gPreviewEnabled.load(std::memory_order_relaxed) &&
+       !gCapturePreviewEnabled.load(std::memory_order_relaxed))return;
     auto* level=ctx.mClientInstance.getLevelRenderer();
     if(!level||!level->mLevelRendererPlayer)return;
     auto const& material=level->mLevelRendererPlayer->mOutlineSelectionMaterial.get();
@@ -530,6 +541,50 @@ void render(BaseActorRenderContext& ctx){
             chunk.gpu->renderMesh(ctx.mScreenContext,material,texture,0,
                 chunk.gpu->mVertexCount.get().value_or(0u),empty.get(),nullptr);
         }
+        if(gCapturePreviewEnabled.load(std::memory_order_relaxed)){
+            std::lock_guard lock(gCaptureMutex);
+            auto const service=ctx.mScreenContext.tessellator.mBufferResourceService.lock();
+            if(gCaptureService.lock()!=service){
+                for(auto& [key,section]:gCaptureSections)section.gpu.reset();
+                gCaptureService=service;
+            }
+            ChunkWire* candidate=nullptr;
+            double nearest=std::numeric_limits<double>::infinity();
+            for(auto& [key,section]:gCaptureSections){
+                if(section.gpu || section.lines.empty() || !visible(ctx,section,camera))continue;
+                auto const distance=chunkCameraDistanceSq(section,camera);
+                if(distance<nearest){nearest=distance;candidate=&section;}
+            }
+            if(candidate){
+                auto const count=candidate->lines.size();
+                t.begin(Tessellator::DebugContextCallback{},mce::PrimitiveMode::LineList,
+                        static_cast<int>(count*2),false);
+                t.color(1.f,1.f,1.f,1.f);
+                for(auto const& segment:candidate->lines)
+                    for(auto const& point:segment){
+                        t.tex2({0.5f,0.5f});
+                        t.vertex(point.x,point.y,point.z);
+                    }
+                candidate->gpu=std::make_unique<mce::Mesh>(
+                    t.end(Tessellator::UploadMode::Buffered,
+                          "BSC_F8NativeSample",SupplementaryFieldAutoGenerationMode{0}));
+                candidate->gpuSegments=count;
+            }
+            shader.color=mce::Color{1.f,0.18f,0.22f,1.f};
+            shader.dirty=true;
+            for(auto& [key,section]:gCaptureSections){
+                if(!section.gpu || !section.gpu->isValid() ||
+                   !visible(ctx,section,camera))continue;
+                auto stack=ctx.mScreenContext.camera.worldMatrixStack.get().pushIdentity(false);
+                float tx=static_cast<float>(section.x*16);
+                float ty=static_cast<float>(section.minY);
+                float tz=static_cast<float>(section.z*16);
+                if(!viewAlreadySubtractsCamera){tx-=camera.x;ty-=camera.y;tz-=camera.z;}
+                stack.mat->translate(tx,ty,tz);
+                section.gpu->renderMesh(ctx.mScreenContext,material,texture,0,
+                    section.gpu->mVertexCount.get().value_or(0u),empty.get(),nullptr);
+            }
+        }
     }catch(...){
         restoreShader();
         throw;
@@ -554,6 +609,40 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
     }
 }
 } // namespace
+void setCapturePreviewEnabled(bool enabled){
+    gCapturePreviewEnabled.store(enabled,std::memory_order_release);
+    if(!enabled){
+        std::lock_guard lock(gCaptureMutex);
+        gCaptureSections.clear();
+        gCaptureSegments=0;
+        gCaptureService.reset();
+    }
+}
+void addCapturePreview(BlockPos const& pos,Mesh const& mesh){
+    if(!gCapturePreviewEnabled.load(std::memory_order_acquire)||mesh.vertices.empty())return;
+    std::unique_lock lock(gCaptureMutex,std::try_to_lock);
+    if(!lock.owns_lock() || gCaptureSegments>=MaxCaptureSegments)return;
+    CaptureKey const key{floorChunk(pos.x),floorChunk(pos.y),floorChunk(pos.z)};
+    auto it=gCaptureSections.find(key);
+    if(it==gCaptureSections.end()){
+        if(gCaptureSections.size()>=MaxCaptureSections)return;
+        auto [added,inserted]=gCaptureSections.try_emplace(key);
+        it=added;
+        it->second.x=std::get<0>(key);
+        it->second.z=std::get<2>(key);
+        it->second.minY=std::get<1>(key)*16;
+        it->second.maxY=it->second.minY+16;
+    }
+    auto& section=it->second;
+    if(section.lines.size()>=MaxCaptureSectionSegments)return;
+    auto const before=section.lines.size();
+    consume(section,mesh,pos,false);
+    section.lines.resize(std::min(section.lines.size(),
+                          before+std::min(MaxCaptureSectionSegments-before,
+                            MaxCaptureSegments-gCaptureSegments)));
+    gCaptureSegments+=section.lines.size()-before;
+    if(section.lines.size()!=before){section.gpu.reset();section.ready=true;}
+}
 std::weak_ptr<mce::BufferResourceService> renderBufferService(){
     std::lock_guard guard(gResourceMutex);
     return gResource;
