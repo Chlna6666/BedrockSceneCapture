@@ -494,9 +494,16 @@ void registerStates(Session& s,Clock::time_point started) {
                 // collapsed into one supposedly complete static model.
                 entry.geometryContext="plant_state_or_position";break;
             default:
-                if(entry.dynamic)entry.geometryContext="neighbor_dependent";break;
+                if(entry.dynamic && entry.geometryContext=="none")
+                    entry.geometryContext="neighbor_dependent";
+                break;
             }
-            if(entry.blockEntity)entry.geometryContext="block_entity_nbt";
+            // Preserve the actual source of dynamic geometry when known:
+            // cauldron liquid level, brewing contents, animated books, etc.
+            // A generic BlockEntity label would hide these requirements and
+            // incorrectly allow fixed-geometry coverage to be reported.
+            if(entry.blockEntity && entry.geometryContext=="none")
+                entry.geometryContext="block_entity_nbt";
             if(entry.geometryContext!="none")entry.dynamic=true;
             auto const& visual=gfx->mVisualShape.get();
             entry.visualBounds={visual.min.x,visual.min.y,visual.min.z,
