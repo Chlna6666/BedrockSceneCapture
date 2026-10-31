@@ -1,4 +1,5 @@
 #include "NativeObservations.h"
+#include "NativeCoordinates.h"
 #include "ll/api/memory/Hook.h"
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
@@ -26,6 +27,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
+#include <unordered_set>
 namespace bsc {
 namespace {
 std::atomic_bool armed{false};
@@ -40,7 +42,10 @@ struct IdHash {
 std::unordered_set<std::array<std::uint32_t,27>,IdHash> seen;
 std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
-constexpr std::size_t MaxDistinctScenes=2048;
+constexpr std::size_t MaxDistinctScenes=8192;
+constexpr std::size_t MaxDistinctPerShape=768;
+std::unordered_map<int,std::size_t> shapesObserved;
+std::unordered_set<std::string> recordedActorLabels;
 constexpr std::size_t MaxTotalVertices=2'000'000;
 std::size_t recordedVertices{};
 constexpr std::size_t MaxNativeVertices=8192;
@@ -108,6 +113,11 @@ std::string modelJson(Model const& model){
          <<",\"cubes\":[";
         bool firstCube=true;
         for(auto const& cube:part->mCubes.get()){
+            auto const& size=cube.mSize.get();
+            // Some 1.26.51.1 renderers hold compiled Cube polygons but expose
+            // zero mSize through this SDK. Never serialize them as real boxes.
+            if(!std::isfinite(size.x)||!std::isfinite(size.y)||!std::isfinite(size.z) ||
+               size.x==0.f||size.y==0.f||size.z==0.f)continue;
             if(!firstCube)o<<',';
             firstCube=false;
             ++cubes;
@@ -138,11 +148,13 @@ std::string modelJson(Model const& model){
 void recordActor(char const* label,Model const& model){
     if(!armed.load(std::memory_order_relaxed))return;
     std::unique_lock lock(mutex,std::try_to_lock);
-    if(!lock.owns_lock() || actorModels.contains(label))return;
+    if(!lock.owns_lock() || recordedActorLabels.contains(label) ||
+       actorModels.contains(label))return;
     // Serialize while holding the bounded lock, once per actor-model variant.
     // These are actual client ModelPart/Cube definitions, not Java geometry.
     auto json=modelJson(model);
     if(!json.empty())actorModels.emplace(label,std::move(json));
+    recordedActorLabels.emplace(label); // Persist across per-tick drains.
 }
 void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,BlockPos const& pos,
                   std::size_t fromPos,std::size_t fromIdx){
@@ -153,6 +165,9 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     auto const& points=raw.mPositions.get();
     if(fromPos>points.size() || points.size()==fromPos ||
        points.size()-fromPos>MaxNativeVertices)return;
+    auto const worldSpace=nativePositionsInWorldSpace(points,pos,fromPos);
+    for(auto i=fromPos;i<points.size();++i)
+        if(!plausibleNativeLocalVertex(points[i],pos,worldSpace))return;
     std::array<std::uint32_t,27> ids{};
     ids[0]=block.mNetworkId;
     auto* region=owner.mRegion;
@@ -169,7 +184,9 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
                     pos.x+dx,pos.y+dy,pos.z+dz}).mNetworkId;
             }
     std::unique_lock lock(mutex,std::try_to_lock);
+    auto const shape=static_cast<int>(gfx->mBlockShape);
     if(!lock.owns_lock()||seen.size()>=MaxDistinctScenes||
+       shapesObserved[shape]>=MaxDistinctPerShape||
        recordedVertices+points.size()-fromPos>MaxTotalVertices||
        !seen.emplace(ids).second)return;
     Mesh mesh;
@@ -183,9 +200,9 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     for(auto i=fromPos;i<points.size();++i){
         auto const& p=points[i];
         Vertex v;
-        v.x=p.x-static_cast<float>(pos.x);
-        v.y=p.y-static_cast<float>(pos.y);
-        v.z=p.z-static_cast<float>(pos.z);
+        v.x=p.x-(worldSpace?static_cast<float>(pos.x):0.f);
+        v.y=p.y-(worldSpace?static_cast<float>(pos.y):0.f);
+        v.z=p.z-(worldSpace?static_cast<float>(pos.z):0.f);
         if(normals.size()==points.size()){
             v.nx=normals[i].x;v.ny=normals[i].y;v.nz=normals[i].z;
         }
@@ -210,6 +227,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
         return;
     }
     recordedVertices+=mesh.vertices.size();
+    ++shapesObserved[shape];
     pending.push_back(NativeObservation{ids,std::move(mesh)});
 }
 LL_TYPE_INSTANCE_HOOK(BSCNativeBlockHook,ll::memory::HookPriority::Normal,
@@ -280,6 +298,8 @@ void clearNativeObservations(){
     std::lock_guard lock(mutex);
     seen.clear();
     recordedVertices=0;
+    shapesObserved.clear();
+    recordedActorLabels.clear();
     pending.clear();
     actorModels.clear();
 }

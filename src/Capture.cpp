@@ -184,8 +184,12 @@ void collectNativeSamples(Session& s) {
         block.samples.emplace_back(std::move(sample));
         ++s.library.sampledBlocks;
     }
-    for(auto& actor:takeActorModels())
-        s.library.actorModels.emplace_back(StaticModel{std::move(actor.name),std::move(actor.geometryJson)});
+    for(auto& actor:takeActorModels()){
+        auto exists=std::find_if(s.library.actorModels.begin(),s.library.actorModels.end(),
+            [&](StaticModel const& prev){return prev.name==actor.name;});
+        if(exists==s.library.actorModels.end())
+            s.library.actorModels.emplace_back(StaticModel{std::move(actor.name),std::move(actor.geometryJson)});
+    }
 }
 void finish(bool cancelled) {
     if(!gSession)return;

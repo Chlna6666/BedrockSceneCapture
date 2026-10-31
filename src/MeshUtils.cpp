@@ -1,4 +1,5 @@
 #include "MeshUtils.h"
+#include "NativeCoordinates.h"
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
@@ -24,15 +25,25 @@ void captureMesh(BlockSource& region,BlockTessellator& blocks,Tessellator& tess,
         auto const* graphics=BlockGraphics::getForBlock(block);
         mesh.layer=graphics?static_cast<std::uint32_t>(graphics->getRenderLayer(region,pos)):0;
         mesh.vertices.reserve(points.size());
+        auto const worldSpace=nativePositionsInWorldSpace(points,pos);
+        // Reject a renderer whose coordinate convention cannot be normalized;
+        // a wild offset would invalidate the entire F7 line overlay.
+        for(auto const& point:points){
+            if(!plausibleNativeLocalVertex(point,pos,worldSpace)){
+                ++output.missingMeshes;
+                (void)tess.end(Tessellator::UploadMode::Never,"BSC_Capture",SupplementaryFieldAutoGenerationMode{0});
+                return;
+            }
+        }
         auto const& normals=raw.mNormals.get();
         auto const& uv=raw.mTextureUVs[0].get();
         mesh.uvValid=(uv.size()==points.size());
         auto const& colors=raw.mColors.get();
         for(std::size_t i=0;i<points.size();++i){
             Vertex v;
-            v.x=points[i].x-static_cast<float>(pos.x);
-            v.y=points[i].y-static_cast<float>(pos.y);
-            v.z=points[i].z-static_cast<float>(pos.z);
+            v.x=points[i].x-(worldSpace?static_cast<float>(pos.x):0.f);
+            v.y=points[i].y-(worldSpace?static_cast<float>(pos.y):0.f);
+            v.z=points[i].z-(worldSpace?static_cast<float>(pos.z):0.f);
             if(normals.size()==points.size()){
                 v.nx=normals[i].x;v.ny=normals[i].y;v.nz=normals[i].z;
             }
