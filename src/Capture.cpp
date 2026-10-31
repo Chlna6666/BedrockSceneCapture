@@ -243,6 +243,10 @@ void begin(LocalPlayer* player) {
         for(auto const& [name,model]:BlockGraphics::mModels())
             if(model)session->geometryModels.emplace_back(name);
     }
+    log().info("F8 native registry snapshot: block_types={}, static_geometry_definitions={}",
+               session->registrationTypes.size(),session->geometryModels.size());
+    if(session->geometryModels.empty())
+        log().warn("F8: native BlockGraphics model registry is empty; static_geometry_models will remain zero unless the renderer populates it");
     if(session->registrationTypes.empty()){
         log().error("F8: no registered block permutations found");
         return;
@@ -491,6 +495,9 @@ void advance(Session& s) {
         registerNativeGeometry(s,tickStart);
         return;
     }
+    if(!s.geometryModels.empty() && !s.monitoringReported)
+        log().info("F8 static geometry catalog: definitions={}, serialized={}",
+                   s.geometryModels.size(),s.library.staticModels.size());
     if(s.player){
         if(s.saveRequested){finish(false);return;}
         // Capture only native tessellation observed by Minecraft's renderer.
