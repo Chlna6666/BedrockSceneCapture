@@ -363,6 +363,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,TriangleBindings> memoizedBindings;
         std::map<std::vector<TextureBinding> const*,std::string> memoizedTextureTables;
         std::set<std::string> staticModelHashes;
+        std::set<std::string> liveModelHashes;
         std::map<std::string,std::string> staticModelIndex;
         std::map<std::string, std::uint32_t> statuses;
         std::set<std::string> capturedActorModelKeys;
@@ -384,6 +385,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     (void)contentAddressedFile(data.directory/"geometry_pool"/"models"/(hash+".json"),model.geometryJson);
                     staticModelHashes.insert(hash);
                 }
+                liveModelHashes.insert(hash);
                 staticModelIndex.emplace(model.name,hash);
             }catch(std::exception const&){
                 ++writeFailures;
@@ -721,6 +723,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             try{
                 auto hash=sha256(actor.geometryJson);
                 (void)contentAddressedFile(data.directory/"geometry_pool"/"models"/(hash+".json"),actor.geometryJson);
+                liveModelHashes.insert(hash);
                 if(!firstActor)entities<<',';
                 firstActor=false;
                 entities << "{\"name\":"<<quoted(actor.name)<<",\"model_ref\":"<<quoted(hash)<<'}';
@@ -773,6 +776,36 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         atomicFile(data.directory/"materials.json",materials.str());
         atomicFile(data.directory/"coverage.json",coverage.str());
         atomicFile(data.directory/"manifest.json",manifest.str());
+        // A completed atomic index update supersedes the last export. Remove
+        // unreferenced content hashes left by earlier F8 runs, otherwise a
+        // 303-mesh library may keep thousands of old appearances and models
+        // on disk. No symlink, non-hash or unknown file may be removed.
+        // A failed geometry write keeps existing content untouched.
+        if(writeFailures==0){
+            auto prune=[&](char const* group,std::set<std::string> const& referenced){
+                auto const folder=data.directory/"geometry_pool"/group;
+                std::error_code iteratorError;
+                for(std::filesystem::directory_iterator it(folder,iteratorError),end;
+                    !iteratorError && it!=end;it.increment(iteratorError)){
+                    auto const& path=it->path();
+                    if(path.extension()!=".json")continue;
+                    auto const hash=path.stem().string();
+                    if(hash.size()!=64 ||
+                       !std::all_of(hash.begin(),hash.end(),[](unsigned char c){
+                           return (c>='0'&&c<='9')||(c>='a'&&c<='f');
+                       }) || referenced.contains(hash))continue;
+                    std::error_code statusError;
+                    auto status=it->symlink_status(statusError);
+                    if(statusError || !std::filesystem::is_regular_file(status))continue;
+                    std::error_code removeError;
+                    std::filesystem::remove(path,removeError);
+                }
+            };
+            prune("models",liveModelHashes);
+            prune("geometry",uniqueExactGeometries);
+            prune("appearance",uniqueAppearances);
+            prune("materials",uniqueMaterials);
+        }
         // Remove redundant v1 files only after successfully publishing v2.
         {
             auto legacy=data.directory/"meshes";
