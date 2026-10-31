@@ -304,6 +304,25 @@ void registerStates(Session& s,Clock::time_point started) {
             entry.blockEntity=false;
             break;
         }
+        // Keep deterministic links between block-state metadata and the
+        // dedicated native renderer model families. An absent capture is not
+        // silently treated as a complete model.
+        switch(kind){
+        case BlockActorType::Chest:
+        case BlockActorType::EnderChest:
+            entry.actorModelKeys={"chest_normal","chest_large"};break;
+        case BlockActorType::Sign:
+            entry.actorModelKeys={"standing_sign"};break;
+        case BlockActorType::HangingSign:
+            entry.actorModelKeys={"hanging_sign"};break;
+        case BlockActorType::Bed:
+            entry.actorModelKeys={"bed"};break;
+        case BlockActorType::ShulkerBox:
+            entry.actorModelKeys={"shulker_box"};break;
+        case BlockActorType::Bell:
+            entry.actorModelKeys={"bell"};break;
+        default:break;
+        }
         if(auto const* gfx=BlockGraphics::getForBlock(*block)){
             entry.renderLayer=static_cast<int>(gfx->mRenderLayer);
             auto cached=s.textureCache.find(gfx);
