@@ -87,7 +87,11 @@ std::mutex gCaptureMutex;
 using CaptureKey=std::tuple<int,int,int>;
 std::map<CaptureKey,ChunkWire> gCaptureSections;
 std::size_t gCaptureSegments{};
-std::set<std::array<int,3>> gCapturedActorPositions;
+// A position can render multiple legal poses (extended piston head, book
+// animation, bell swing). Retain a few distinct poses instead of freezing
+// the very first pose forever.
+constexpr std::size_t MaxActorPoseVariants=4;
+std::map<std::array<int,3>,std::set<std::uint64_t>> gCapturedActorPoses;
 std::weak_ptr<mce::BufferResourceService> gCaptureService;
 std::mutex gResourceMutex;
 std::weak_ptr<mce::BufferResourceService> gResource;
@@ -711,7 +715,7 @@ void setCapturePreviewEnabled(bool enabled){
         std::lock_guard lock(gCaptureMutex);
         gCaptureSections.clear();
         gCaptureSegments=0;
-        gCapturedActorPositions.clear();
+        gCapturedActorPoses.clear();
         gCaptureService.reset();
     }
 }
@@ -746,7 +750,27 @@ void addCaptureActorPreview(BlockPos const& pos,
     std::unique_lock lock(gCaptureMutex,std::try_to_lock);
     if(!lock.owns_lock()||gCaptureSegments>=MaxCaptureSegments)return;
     std::array<int,3> const actorKey{pos.x,pos.y,pos.z};
-    if(gCapturedActorPositions.contains(actorKey))return;
+    auto posesIt=gCapturedActorPoses.find(actorKey);
+    if(posesIt!=gCapturedActorPoses.end()&&
+       posesIt->second.size()>=MaxActorPoseVariants)return;
+    // Stable quantized world-position-independent geometry signature.
+    // Distinguish actual extensions/rotation from repeated render passes.
+    std::uint64_t signature=14695981039346656037ULL;
+    auto mix=[&](std::uint64_t value){
+        signature^=value;signature*=1099511628211ULL;
+    };
+    mix(segments.size());
+    for(auto const& edge:segments){
+        for(auto const& point:{edge.from,edge.to}){
+            for(unsigned dimension=0;dimension<3;++dimension){
+                auto const relative=point[dimension]-static_cast<float>(actorKey[dimension]);
+                if(!std::isfinite(relative)||std::abs(relative)>16.f)return;
+                auto const scaled=std::llround(static_cast<double>(relative)*1024.);
+                mix(static_cast<std::uint64_t>(scaled));
+            }
+        }
+    }
+    if(posesIt!=gCapturedActorPoses.end()&&posesIt->second.contains(signature))return;
     CaptureKey const key{floorChunk(pos.x),floorChunk(pos.y),floorChunk(pos.z)};
     auto it=gCaptureSections.find(key);
     if(it==gCaptureSections.end()){
@@ -780,7 +804,7 @@ void addCaptureActorPreview(BlockPos const& pos,
     }
     if(added){
         gCaptureSegments+=added;
-        gCapturedActorPositions.insert(actorKey);
+        gCapturedActorPoses[actorKey].insert(signature);
         section.gpu.reset();
         section.ready=true;
     }
