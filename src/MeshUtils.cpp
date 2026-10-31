@@ -3,6 +3,7 @@
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
+#include "mc/world/level/block/BlockShape.h"
 #include "mc/deps/minecraft_renderer/renderer/MeshData.h"
 #include "mc/deps/minecraft_renderer/renderer/Mesh.h"
 #include "mc/world/level/BlockPos.h"
@@ -16,8 +17,16 @@ void captureMesh(BlockSource& region,BlockTessellator& blocks,Tessellator& tess,
     blocks.setRegion(region);
     bool ok=blocks.tessellateInWorld(tess,block,pos,true);
     auto& raw=tess.mMeshData.get();
-    if(raw.mPositions.get().empty()&&!ok && block.getTypeName()=="minecraft:bubble_column")
-        blocks.tessellateBubbleColumnInWorld(tess,block,pos);
+    // Some liquid render paths bypass the normal BlockTessellator dispatch.
+    // Only use this fallback when the first pass produced no vertices,
+    // otherwise double tessellation would corrupt winding and UVs.
+    if(raw.mPositions.get().empty()){
+        auto const* graphics=BlockGraphics::getForBlock(block);
+        if(graphics && graphics->mBlockShape==BlockShape::Water)
+            blocks.tessellateLiquidInWorld(tess,block,pos);
+        else if(!ok && block.getTypeName()=="minecraft:bubble_column")
+            blocks.tessellateBubbleColumnInWorld(tess,block,pos);
+    }
     auto const& points=raw.mPositions.get();
     if(!points.empty()) {
         Mesh mesh;mesh.cell=cell;
