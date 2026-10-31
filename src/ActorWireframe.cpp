@@ -246,13 +246,19 @@ void observePart(ModelPart const& part,ScreenContext& screen,float scale,
     }
     discardedTransforms.fetch_add(1,std::memory_order_relaxed);
 }
+thread_local unsigned gPartRenderAtPositionDepth{};
+struct PartPositionScope {
+    PartPositionScope(){++gPartRenderAtPositionDepth;}
+    ~PartPositionScope(){--gPartRenderAtPositionDepth;}
+};
 LL_TYPE_INSTANCE_HOOK(BSCActorPartWireHook,ll::memory::HookPriority::Normal,
     ModelPart,&ModelPart::render,void,
     ScreenContext& screen,Model& model,float scale,bool hideParentBodyPart,
     uint count,Matrix boneToEntitySpaceMatrix){
     // The renderer has already configured the bone pose. Capture while the
     // parent model matrix is still on the stack; the original call may pop it.
-    observePart(*this,screen,scale,boneToEntitySpaceMatrix);
+    if(gPartRenderAtPositionDepth==0)
+        observePart(*this,screen,scale,boneToEntitySpaceMatrix);
     origin(screen,model,scale,hideParentBodyPart,count,boneToEntitySpaceMatrix);
 }
 // Some native BlockEntity models route directly through renderAtPosition,
@@ -263,6 +269,7 @@ LL_TYPE_INSTANCE_HOOK(BSCActorPartAtPositionWireHook,ll::memory::HookPriority::N
     ScreenContext& screen,Model& model,Vec3 const& position,float scale,
     bool hideParentBodyPart,uint count,Matrix boneToEntitySpaceMatrix){
     observePart(*this,screen,scale,boneToEntitySpaceMatrix);
+    PartPositionScope scope;
     origin(screen,model,position,scale,hideParentBodyPart,count,boneToEntitySpaceMatrix);
 }
 } // namespace
