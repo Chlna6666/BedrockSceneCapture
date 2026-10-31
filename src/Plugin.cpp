@@ -22,7 +22,7 @@ public:
         if(!installCapture()) {
             mod.getLogger().error("Could not install tick hook");return false;
         }
-        if(!installPreview()){
+        if(!installPreview(mod)){
             uninstallCapture();mod.getLogger().error("Could not install render hook");return false;
         }
         if(!installMenuCapture())

@@ -1,5 +1,6 @@
 #include "Preview.h"
 #include "MeshUtils.h"
+#include "ll/api/mod/NativeMod.h"
 #include "ll/api/memory/Hook.h"
 #include "mc/client/game/ClientInstance.h"
 #include "mc/client/gui/screens/ScreenContext.h"
@@ -82,6 +83,8 @@ LocalPlayer* gPlayer{};
 BlockSource* gRegion{};
 std::uint64_t gFrame{};
 unsigned gVertexMarks{};
+ll::mod::NativeMod* gPreviewMod{};
+Clock::time_point gLastTransformDiagnostic{};
 mce::TexturePtr gWhiteTexture{};
 bool gWhiteReady{};
 
@@ -453,6 +456,30 @@ void render(BaseActorRenderContext& ctx){
             std::isfinite(cameraInView.x)&&std::isfinite(cameraInView.y)&&std::isfinite(cameraInView.z) &&
             std::isfinite(originInView.x)&&std::isfinite(originInView.y)&&std::isfinite(originInView.z) &&
             glm::length(cameraInView)+0.5f<glm::length(originInView);
+
+        if(gPreviewMod && (gLastTransformDiagnostic.time_since_epoch().count()==0 ||
+            Clock::now()-gLastTransformDiagnostic>std::chrono::seconds(8))){
+            gLastTransformDiagnostic=Clock::now();
+            auto const& world=ctx.mScreenContext.camera.worldMatrixStack.get().top()._m.get();
+            auto const& projection=ctx.mScreenContext.camera.projectionMatrixStack.get().top()._m.get();
+            auto const* player=ctx.mClientInstance.getLocalPlayer();
+            auto const playerPos=player?player->getFeetBlockPos():BlockPos{};
+            gPreviewMod->getLogger().info(
+                "F7 matrix diag: camera=({:.2f},{:.2f},{:.2f}) player=({},{},{}) "
+                "view_translation=({:.2f},{:.2f},{:.2f}) "
+                "world_translation=({:.2f},{:.2f},{:.2f}) "
+                "projection_diag=({:.3f},{:.3f},{:.3f}) "
+                "eye_camera=({:.2f},{:.2f},{:.2f}) "
+                "eye_origin=({:.2f},{:.2f},{:.2f}) "
+                "view_subtracts_camera={} cached_chunks={}",
+                camera.x,camera.y,camera.z,playerPos.x,playerPos.y,playerPos.z,
+                view[3][0],view[3][1],view[3][2],
+                world[3][0],world[3][1],world[3][2],
+                projection[0][0],projection[1][1],projection[2][2],
+                cameraInView.x,cameraInView.y,cameraInView.z,
+                originInView.x,originInView.y,originInView.z,
+                viewAlreadySubtractsCamera,gChunks.size());
+        }
         for(auto& [key,chunk]:gChunks){
             if(!chunk.ready || !chunk.gpu || !chunk.gpu->isValid() ||
                !visible(ctx,chunk,camera))continue;
@@ -498,6 +525,10 @@ std::weak_ptr<mce::BufferResourceService> renderBufferService(){
     std::lock_guard guard(gResourceMutex);
     return gResource;
 }
-bool installPreview(){return BSCOverlayHook::hook()==0;}
-void uninstallPreview(){BSCOverlayHook::unhook();reset();gPreviewEnabled.store(false);}
+bool installPreview(ll::mod::NativeMod& mod){
+    gPreviewMod=&mod;
+    gLastTransformDiagnostic={};
+    return BSCOverlayHook::hook()==0;
+}
+void uninstallPreview(){BSCOverlayHook::unhook();reset();gPreviewEnabled.store(false);gPreviewMod=nullptr;}
 } // namespace bsc

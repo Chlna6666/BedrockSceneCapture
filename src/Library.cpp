@@ -209,6 +209,9 @@ std::string meshJson(Mesh const& mesh) {
       << (mesh.registryCrossPlanes?"registry_cross_planes":(mesh.registryVisualBounds?"registry_visual_bounds":"native_world_tessellation"))
       << "\",\"uv_space\":\""
       << (mesh.registryVisualBounds?"block_face_local":"runtime_terrain_atlas")
+      << "\",\"normals_source\":\""
+      << (mesh.normalsReconstructed?"reconstructed_triangle_winding":
+          (mesh.registryVisualBounds?"registry_geometry":"native_or_unavailable"))
       << "\",\"material\":\"terrain/layer_"
       << mesh.layer << "\",\"vertices\":[";
     for (std::size_t i=0;i<mesh.vertices.size();++i) {

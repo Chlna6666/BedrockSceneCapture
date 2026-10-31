@@ -19,6 +19,7 @@
 #include "mc/client/renderer/blockactor/BellBlockActorRenderer.h"
 #include <atomic>
 #include <array>
+#include <vector>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -156,6 +157,75 @@ void recordActor(char const* label,Model const& model){
     if(!json.empty())actorModels.emplace(label,std::move(json));
     recordedActorLabels.emplace(label); // Persist across per-tick drains.
 }
+
+void reconstructMissingNormals(Mesh& mesh){
+    if(mesh.vertices.empty())return;
+    bool missing=false;
+    for(auto const& v:mesh.vertices){
+        float n2=v.nx*v.nx+v.ny*v.ny+v.nz*v.nz;
+        if(!std::isfinite(n2)||n2<1.0e-8f){missing=true;break;}
+    }
+    if(!missing)return;
+    struct Normal { double x{},y{},z{}; };
+    std::vector<Normal> sums(mesh.vertices.size());
+    auto addTriangle=[&](std::uint32_t ia,std::uint32_t ib,std::uint32_t ic){
+        if(ia>=mesh.vertices.size()||ib>=mesh.vertices.size()||ic>=mesh.vertices.size())
+            return;
+        auto const& a=mesh.vertices[ia];
+        auto const& b=mesh.vertices[ib];
+        auto const& c=mesh.vertices[ic];
+        double const ux=b.x-a.x,uy=b.y-a.y,uz=b.z-a.z;
+        double const vx=c.x-a.x,vy=c.y-a.y,vz=c.z-a.z;
+        Normal const cross{uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx};
+        double const len2=cross.x*cross.x+cross.y*cross.y+cross.z*cross.z;
+        if(!std::isfinite(len2)||len2<1.e-16)return;
+        // Face-area weighting avoids a bias from unequal triangle areas.
+        for(auto i:{ia,ib,ic}){
+            sums[i].x+=cross.x;
+            sums[i].y+=cross.y;
+            sums[i].z+=cross.z;
+        }
+    };
+    std::vector<std::uint32_t> sequence=mesh.indices;
+    if(sequence.empty()){
+        sequence.resize(mesh.vertices.size());
+        for(std::size_t i=0;i<sequence.size();++i)
+            sequence[i]=static_cast<std::uint32_t>(i);
+    }
+    switch(mesh.primitive){
+    case 1:
+        for(std::size_t i=0;i+3<sequence.size();i+=4){
+            addTriangle(sequence[i],sequence[i+1],sequence[i+2]);
+            addTriangle(sequence[i],sequence[i+2],sequence[i+3]);
+        }
+        break;
+    case 2:
+        for(std::size_t i=0;i+2<sequence.size();i+=3)
+            addTriangle(sequence[i],sequence[i+1],sequence[i+2]);
+        break;
+    case 3:
+        for(std::size_t i=2;i<sequence.size();++i)
+            if(i&1)addTriangle(sequence[i-1],sequence[i-2],sequence[i]);
+            else addTriangle(sequence[i-2],sequence[i-1],sequence[i]);
+        break;
+    default:return;
+    }
+    bool reconstructed=false;
+    for(std::size_t i=0;i<mesh.vertices.size();++i){
+        auto& v=mesh.vertices[i];
+        auto const& n=sums[i];
+        float const old2=v.nx*v.nx+v.ny*v.ny+v.nz*v.nz;
+        if(std::isfinite(old2)&&old2>=1.e-8f)continue;
+        auto const len=std::sqrt(n.x*n.x+n.y*n.y+n.z*n.z);
+        if(len<=1.e-8||!std::isfinite(len))continue;
+        v.nx=static_cast<float>(n.x/len);
+        v.ny=static_cast<float>(n.y/len);
+        v.nz=static_cast<float>(n.z/len);
+        reconstructed=true;
+    }
+    mesh.normalsReconstructed=reconstructed;
+}
+
 void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,BlockPos const& pos,
                   std::size_t fromPos,std::size_t fromIdx){
     if(!armed.load(std::memory_order_relaxed))return;
@@ -226,6 +296,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
         seen.erase(ids);
         return;
     }
+    reconstructMissingNormals(mesh);
     recordedVertices+=mesh.vertices.size();
     ++shapesObserved[shape];
     pending.push_back(NativeObservation{ids,std::move(mesh)});
