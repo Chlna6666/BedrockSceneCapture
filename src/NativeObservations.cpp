@@ -456,28 +456,41 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
     dest.boxes.clear();
     for(auto const& box:boxes){
         auto const& size=box.mSize.get();
-        if(!std::isfinite(size.x)||!std::isfinite(size.y)||!std::isfinite(size.z)||
-           size.x==0.f||size.y==0.f||size.z==0.f)continue;
+        auto const& from=box.mFrom.get();
+        auto const& rotation=box.mRotation.get();
+        auto const& pivotPos=box.mPivot.get();
+        auto finite=[](float n){return std::isfinite(n)&&std::abs(n)<1024.f;};
+        if(!finite(size.x)||!finite(size.y)||!finite(size.z)||
+           size.x==0.f||size.y==0.f||size.z==0.f||
+           !finite(from.x)||!finite(from.y)||!finite(from.z)||
+           !finite(rotation.x)||!finite(rotation.y)||!finite(rotation.z)||
+           !finite(pivotPos.x)||!finite(pivotPos.y)||!finite(pivotPos.z))continue;
         std::ostringstream out;
         out.imbue(std::locale::classic());
         out<<std::setprecision(std::numeric_limits<float>::max_digits10);
         out<<"{\"source\":\"native_geometry_resource_box\",\"origin\":";
-        vec3(out,box.mFrom.get());
+        vec3(out,from);
         out<<",\"size\":";vec3(out,size);
-        out<<",\"rotation\":";vec3(out,box.mRotation.get());
-        out<<",\"pivot\":";vec3(out,box.mPivot.get());
+        out<<",\"rotation\":";vec3(out,rotation);
+        out<<",\"pivot\":";vec3(out,pivotPos);
         out<<",\"mirror\":"<<(box.mMirror?"true":"false")<<",\"faces\":[";
+        bool const hasFaceUVs=box.mUsesFaceUVs;
         auto const& faces=box.mFaceUVs.get();
-        for(std::size_t i=0;i<faces.size();++i){
+        if(hasFaceUVs)for(std::size_t i=0;i<faces.size();++i){
+            auto const& uv=faces[i].mUV.get();
+            auto const& uvSize=faces[i].mUVSize.get();
+            if(!finite(uv.x)||!finite(uv.y)||!finite(uvSize.x)||!finite(uvSize.y))continue;
             if(i)out<<',';
             out<<"{\"face\":"<<i<<",\"valid\":"
                <<(faces[i].mFaceValid?"true":"false")<<",\"uv\":";
-            vec2(out,faces[i].mUV.get());
-            out<<",\"uv_size\":";vec2(out,faces[i].mUVSize.get());
+            vec2(out,uv);
+            out<<",\"uv_size\":";vec2(out,uvSize);
             out<<",\"material_index\":"<<faces[i].mMaterialInstanceListIndex
                <<",\"uv_rotation\":"<<static_cast<int>(faces[i].mUvRotation)<<'}';
         }
-        out<<"],\"uv_complete\":true}";
+        auto const& tex=box.mTex.get();
+        out<<"],\"legacy_texture_offset\":["<<tex.x<<','<<tex.y<<']'
+           <<",\"uv_complete\":"<<(hasFaceUVs?"true":"false")<<'}';
         dest.boxes.emplace_back(out.str());
     }
 }
