@@ -303,16 +303,29 @@ void recordActor(char const* label,Model const& model,
                  std::initializer_list<ModelPart const*> explicitParts){
     if(!armed.load(std::memory_order_relaxed))return;
     std::unique_lock lock(mutex,std::try_to_lock);
-    if(!lock.owns_lock() || recordedActorLabels.contains(label))return;
-    // An empty model may become valid after resource initialization.
-    // Retry at most once a second instead of permanently blacklisting it.
+    if(!lock.owns_lock())return;
+    // A constructor-time model can have unresolved UVs or zero-size compiled
+    // cubes. Do not let that first partial snapshot permanently suppress a
+    // later complete live-renderer snapshot.
+    auto existing=actorModels.find(label);
+    if(existing!=actorModels.end() &&
+       existing->second.find("\\"geometry_complete\\":true")!=std::string::npos)
+        return;
+    // Retry incomplete/empty models at most once a second.
     auto const now=std::chrono::steady_clock::now();
     auto const it=actorLastAttempt.find(label);
     if(it!=actorLastAttempt.end() && now-it->second<std::chrono::seconds(1))return;
     actorLastAttempt[std::string(label)]=now;
     auto json=modelJson(model,explicitParts);
     if(json.empty())return;
-    actorModels.emplace(label,std::move(json));
+    if(existing!=actorModels.end()){
+        // Only replace an incomplete snapshot with one whose native CPU
+        // boxes, polygon mesh and source UVs have all been resolved.
+        if(json.find("\\"geometry_complete\\":true")==std::string::npos)return;
+        existing->second=std::move(json);
+    }else{
+        actorModels.emplace(label,std::move(json));
+    }
     recordedActorLabels.emplace(label);
 }
 
@@ -892,8 +905,13 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
         return;
     }
     auto& logger=mod.getLogger();
-    auto discardCachedParts=[&](std::initializer_list<ModelPart const*> parts){
+    auto discardCachedParts=[&](Model const& model,
+                                std::initializer_list<ModelPart const*> parts){
+        // Built-in temporary model constructors may register additional
+        // parts in mAllParts. Keeping their raw addresses in sourceBoxes lets
+        // later live models reuse a dangling pointer and inherit wrong boxes.
         std::lock_guard lock(sourceBoxesMutex);
+        for(auto const* part:model.mAllParts.get())sourceBoxes.erase(part);
         for(auto const* part:parts)sourceBoxes.erase(part);
     };
     auto logTemplate=[&](char const* name){
@@ -912,7 +930,7 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
             auto const& bottom=model.mBottom.get();
             auto const& latch=model.mLock.get();
             recordActor("chest_normal",model,{&lid,&bottom,&latch});
-            discardCachedParts({&lid,&bottom,&latch});
+            discardCachedParts(model,{&lid,&bottom,&latch});
             logTemplate("chest_normal");
         }
         {
@@ -921,7 +939,7 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
             auto const& bottom=model.mBottom.get();
             auto const& latch=model.mLock.get();
             recordActor("chest_large",model,{&lid,&bottom,&latch});
-            discardCachedParts({&lid,&bottom,&latch});
+            discardCachedParts(model,{&lid,&bottom,&latch});
             logTemplate("chest_large");
         }
         {
@@ -929,7 +947,7 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
             auto const& body=model.mBellBody.get();
             auto const& base=model.mBellBase.get();
             recordActor("bell",model,{&body,&base});
-            discardCachedParts({&body,&base});
+            discardCachedParts(model,{&body,&base});
             logTemplate("bell");
         }
         {
@@ -938,7 +956,7 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
             auto const& arm=model.mArm.get();
             auto const& head=model.mFront.get();
             recordActor("piston_arm",model,{&base,&arm,&head});
-            discardCachedParts({&base,&arm,&head});
+            discardCachedParts(model,{&base,&arm,&head});
             logTemplate("piston_arm");
         }
         // Enchanting table and lectern books are independent native
@@ -953,7 +971,7 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
             };
             auto const* label=onLectern?"lectern_book":"enchanting_book";
             recordActor(label,model,nodes);
-            discardCachedParts(nodes);
+            discardCachedParts(model,nodes);
             logTemplate(label);
         }
     }catch(std::exception const& e){
