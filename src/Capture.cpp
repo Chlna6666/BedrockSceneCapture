@@ -364,8 +364,10 @@ void registerStates(Session& s,Clock::time_point started) {
         case BlockActorType::PistonArm:
             entry.actorModelKeys={"piston_arm"};break;
         case BlockActorType::EnchantingTable:
+            entry.actorModelKeys={"enchanting_book"};
             entry.geometryContext="animated_book";entry.dynamic=true;break;
         case BlockActorType::Lectern:
+            entry.actorModelKeys={"lectern_book"};
             entry.geometryContext="lectern_book";entry.dynamic=true;break;
         case BlockActorType::Beacon:
             entry.geometryContext="beacon_beam";entry.dynamic=true;break;

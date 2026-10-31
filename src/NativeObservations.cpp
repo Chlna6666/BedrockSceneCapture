@@ -15,6 +15,7 @@
 #include "mc/client/model/models/ChestModel.h"
 #include "mc/client/model/models/BellModel.h"
 #include "mc/client/model/models/PistonArmModel.h"
+#include "mc/client/model/models/EnchantingBookModel.h"
 #include "mc/client/model/Geometry.h"
 #include "mc/client/model/geom/ModelPart.h"
 #include "mc/client/model/geom/Cube.h"
@@ -908,6 +909,20 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
             recordActor("piston_arm",model,{&base,&arm,&head});
             discardCachedParts({&base,&arm,&head});
             logTemplate("piston_arm");
+        }
+        // Enchanting table and lectern books are independent native
+        // seven-bone models; their live poses must remain dynamic.
+        for(bool onLectern:{false,true}){
+            EnchantingBookModel model(onLectern);
+            auto const& parts=model.mBook.get();
+            std::initializer_list<ModelPart const*> const nodes={
+                &parts[0],&parts[1],&parts[2],&parts[3],
+                &parts[4],&parts[5],&parts[6]
+            };
+            auto const* label=onLectern?"lectern_book":"enchanting_book";
+            recordActor(label,model,nodes);
+            discardCachedParts(nodes);
+            logTemplate(label);
         }
     }catch(std::exception const& e){
         logger.warn("F8 native model template reconstruction failed: {}",e.what());
