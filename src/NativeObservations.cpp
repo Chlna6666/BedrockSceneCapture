@@ -19,6 +19,9 @@
 #include "mc/client/renderer/blockactor/BellBlockActorRenderer.h"
 #include <atomic>
 #include <array>
+#include <algorithm>
+#include <chrono>
+#include <initializer_list>
 #include <vector>
 #include <cmath>
 #include <iomanip>
@@ -27,7 +30,6 @@
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
-#include <unordered_set>
 #include <unordered_set>
 namespace bsc {
 namespace {
@@ -47,6 +49,7 @@ constexpr std::size_t MaxDistinctScenes=8192;
 constexpr std::size_t MaxDistinctPerShape=768;
 std::unordered_map<int,std::size_t> shapesObserved;
 std::unordered_set<std::string> recordedActorLabels;
+std::unordered_map<std::string,std::chrono::steady_clock::time_point> actorLastAttempt;
 constexpr std::size_t MaxTotalVertices=2'000'000;
 std::size_t recordedVertices{};
 constexpr std::size_t MaxNativeVertices=8192;
@@ -85,11 +88,19 @@ void vec3(std::ostringstream& o,Vec3 const& v){
 void vec2(std::ostringstream& o,Vec2 const& v){
     o<<'['<<v.x<<','<<v.y<<']';
 }
-std::string modelJson(Model const& model){
+std::string modelJson(Model const& model,
+                      std::initializer_list<ModelPart const*> explicitParts){
     std::ostringstream o;
     o.imbue(std::locale::classic());
     o<<std::setprecision(std::numeric_limits<float>::max_digits10);
-    auto const& parts=model.mAllParts.get();
+    // Built-in block-actor models may own inline ModelParts absent from mAllParts.
+    std::vector<ModelPart const*> parts;
+    auto const& registered=model.mAllParts.get();
+    parts.reserve(registered.size()+explicitParts.size());
+    for(auto const* part:registered)if(part)parts.push_back(part);
+    for(auto const* part:explicitParts)
+        if(part && std::find(parts.begin(),parts.end(),part)==parts.end())
+            parts.push_back(part);
     if(parts.empty())return {};
     std::unordered_map<ModelPart const*,std::size_t> indices;
     for(std::size_t i=0;i<parts.size();++i)if(parts[i])indices.emplace(parts[i],i);
@@ -146,16 +157,21 @@ std::string modelJson(Model const& model){
     o<<"]}\n";
     return cubes?o.str():std::string{};
 }
-void recordActor(char const* label,Model const& model){
+void recordActor(char const* label,Model const& model,
+                 std::initializer_list<ModelPart const*> explicitParts){
     if(!armed.load(std::memory_order_relaxed))return;
     std::unique_lock lock(mutex,std::try_to_lock);
-    if(!lock.owns_lock() || recordedActorLabels.contains(label) ||
-       actorModels.contains(label))return;
-    // Serialize while holding the bounded lock, once per actor-model variant.
-    // These are actual client ModelPart/Cube definitions, not Java geometry.
-    auto json=modelJson(model);
-    if(!json.empty())actorModels.emplace(label,std::move(json));
-    recordedActorLabels.emplace(label); // Persist across per-tick drains.
+    if(!lock.owns_lock() || recordedActorLabels.contains(label))return;
+    // An empty model may become valid after resource initialization.
+    // Retry at most once a second instead of permanently blacklisting it.
+    auto const now=std::chrono::steady_clock::now();
+    auto const it=actorLastAttempt.find(label);
+    if(it!=actorLastAttempt.end() && now-it->second<std::chrono::seconds(1))return;
+    actorLastAttempt[std::string(label)]=now;
+    auto json=modelJson(model,explicitParts);
+    if(json.empty())return;
+    actorModels.emplace(label,std::move(json));
+    recordedActorLabels.emplace(label);
 }
 
 void reconstructMissingNormals(Mesh& mesh){
@@ -315,38 +331,51 @@ LL_TYPE_INSTANCE_HOOK(BSCChestModelHook,ll::memory::HookPriority::Normal,
     ChestRenderer,&ChestRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     origin(ctx,data);
-    recordActor("chest_normal",this->mChestModel.get());
-    recordActor("chest_large",this->mLargeChestModel.get());
+    auto const& small=this->mChestModel.get();
+    auto const& large=this->mLargeChestModel.get();
+    recordActor("chest_normal",small,
+        {&small.mLid.get(),&small.mBottom.get(),&small.mLock.get()});
+    recordActor("chest_large",large,
+        {&large.mLid.get(),&large.mBottom.get(),&large.mLock.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCSignModelHook,ll::memory::HookPriority::Normal,
     SignRenderer,&SignRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     origin(ctx,data);
-    recordActor("standing_sign",this->mSignModel.get());
+    auto const& model=this->mSignModel.get();
+    recordActor("standing_sign",model,{&model.mCube.get(),&model.mCube2.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
     HangingSignRenderer,&HangingSignRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     origin(ctx,data);
-    recordActor("hanging_sign",this->mSignModel.get());
+    auto const& model=this->mSignModel.get();
+    recordActor("hanging_sign",model,
+        {&model.mPlank.get(),&model.mBoard.get(),&model.mVChain.get(),
+         &model.mChainL1.get(),&model.mChainL2.get(),
+         &model.mChainR1.get(),&model.mChainR2.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCBedModelHook,ll::memory::HookPriority::Normal,
     BedRenderer,&BedRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     origin(ctx,data);
-    recordActor("bed",this->mBed.get());
+    auto const& model=this->mBed.get();
+    recordActor("bed",model,{&model.mBody.get(),&model.mLeg0.get(),
+        &model.mLeg1.get(),&model.mLeg2.get(),&model.mLeg3.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCShulkerModelHook,ll::memory::HookPriority::Normal,
     ShulkerBoxRenderer,&ShulkerBoxRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     origin(ctx,data);
-    recordActor("shulker_box",this->mShulkerBoxModel.get());
+    auto const& model=this->mShulkerBoxModel.get();
+    recordActor("shulker_box",model,{&model.mLid.get(),&model.mBase.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCBellModelHook,ll::memory::HookPriority::Normal,
     BellBlockActorRenderer,&BellBlockActorRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     origin(ctx,data);
-    recordActor("bell",this->mBell.get());
+    auto const& model=this->mBell.get();
+    recordActor("bell",model,{&model.mBellBody.get(),&model.mBellBase.get()});
 }
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
      installedBed{},installedShulker{},installedBell{};
@@ -371,6 +400,7 @@ void clearNativeObservations(){
     recordedVertices=0;
     shapesObserved.clear();
     recordedActorLabels.clear();
+    actorLastAttempt.clear();
     pending.clear();
     actorModels.clear();
 }
