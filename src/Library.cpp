@@ -349,7 +349,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                    << ',' << block.atlasUv[2] << ',' << block.atlasUv[3] << ']'
                    << ",\"texture_bindings\":[";
             bool firstTexture=true;
-            for(auto const& tex:block.textureBindings()){
+            // Audio-only state aliases inherit the canonical model's face
+            // texture bindings; repeating atlas tables for every note pitch
+            // would waste far more space than the shared mesh itself.
+            if(!block.hasGeometryAlias)for(auto const& tex:block.textureBindings()){
                 if(!firstTexture)blocks<<',';
                 firstTexture=false;
                 blocks << "{\"slot\":" << tex.slot
