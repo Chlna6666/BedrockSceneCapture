@@ -3,6 +3,7 @@
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iomanip>
 #include <fstream>
 #include <limits>
