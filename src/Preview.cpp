@@ -428,6 +428,16 @@ void render(BaseActorRenderContext& ctx,bool drawF7,bool drawF8){
         shader.color=previous;
         shader.dirty=true;
     };
+    // Each pass has its own matrix stack. F8 cannot inherit this value from
+    // an F7-only branch, otherwise its red preview uses a wrong origin.
+    auto const& view=ctx.mScreenContext.camera.viewMatrixStack.get().top()._m.get();
+    glm::vec3 const cameraWorld{camera.x,camera.y,camera.z};
+    glm::vec3 const cameraInView{view*glm::vec4(cameraWorld,1.f)};
+    glm::vec3 const originInView{view*glm::vec4(0.f,0.f,0.f,1.f)};
+    bool const viewAlreadySubtractsCamera=
+        std::isfinite(cameraInView.x)&&std::isfinite(cameraInView.y)&&std::isfinite(cameraInView.z) &&
+        std::isfinite(originInView.x)&&std::isfinite(originInView.y)&&std::isfinite(originInView.z) &&
+        glm::length(cameraInView)+0.5f<glm::length(originInView);
     try {
         if(drawF7){
         // Ordered map iteration has no relation to camera distance.
@@ -495,14 +505,7 @@ void render(BaseActorRenderContext& ctx,bool drawF7,bool drawF8){
         // can be either a world-to-eye matrix or orientation-only depending
         // on the renderer pass. Detect which space it consumes so that the
         // camera translation is applied exactly once.
-        auto const& view=ctx.mScreenContext.camera.viewMatrixStack.get().top()._m.get();
-        glm::vec3 const cameraWorld{camera.x,camera.y,camera.z};
-        glm::vec3 const cameraInView{view*glm::vec4(cameraWorld,1.f)};
-        glm::vec3 const originInView{view*glm::vec4(0.f,0.f,0.f,1.f)};
-        bool const viewAlreadySubtractsCamera=
-            std::isfinite(cameraInView.x)&&std::isfinite(cameraInView.y)&&std::isfinite(cameraInView.z) &&
-            std::isfinite(originInView.x)&&std::isfinite(originInView.y)&&std::isfinite(originInView.z) &&
-            glm::length(cameraInView)+0.5f<glm::length(originInView);
+
 
         if(gPreviewMod && (gLastTransformDiagnostic.time_since_epoch().count()==0 ||
             Clock::now()-gLastTransformDiagnostic>std::chrono::seconds(8))){
