@@ -74,9 +74,9 @@ class Writer {
                     gMod->getLogger().error("F8 model library write failed: {}",error);
                 else
                     gMod->getLogger().info(
-                        "F8 model library saved: states={}, models={}, samples={}, directory={}",
-                        task.registered,task.staticModels.size(),task.sampledBlocks,
-                        task.directory.string());
+                        "F8 model library saved: states={}, static_models={}, actor_models={}, geometry_samples={}, directory={}",
+                        task.registered,task.staticModels.size(),task.actorModels.size(),
+                        task.sampledBlocks,task.directory.string());
             }
         }
     }
@@ -205,14 +205,16 @@ void finish(bool cancelled) {
     auto directory=gSession->library.directory;
     auto registered=gSession->library.registered;
     auto sampled=gSession->library.sampledBlocks;
+    auto staticCount=gSession->library.staticModels.size();
+    auto actorCount=gSession->library.actorModels.size();
     auto data=std::move(gSession->library);
     gSession.reset();
     if (!gWriter.submit(std::move(data))) {
         log().error("F8 export writer queue full; model library not submitted");
         return;
     }
-    log().info("F8 registry states={}, generated geometry states={}, cancelled={}; writing {}",
-               registered,sampled,cancelled,directory.string());
+    log().info("F8 registry states={}, geometry samples={}, static models={}, actor models={}, cancelled={}; writing {}",
+               registered,sampled,staticCount,actorCount,cancelled,directory.string());
 }
 void begin(LocalPlayer* player) {
     if(gSession) finish(true);
