@@ -1,0 +1,33 @@
+#pragma once
+#include <array>
+#include <cstdint>
+#include <vector>
+class BaseActorRenderContext;
+struct BlockActorRenderData;
+struct Vec3;
+namespace ll::mod {class NativeMod;}
+namespace bsc {
+struct ActorWireSegment {
+    std::array<float,3> from{},to{};
+};
+// An actor's original renderer sets the exact world anchor and animated pose
+// context. No world/chunk scanning, no collision-box substitution.
+class ActorWireframeScope {
+public:
+    ActorWireframeScope(BaseActorRenderContext&,BlockActorRenderData const&);
+    ~ActorWireframeScope();
+    ActorWireframeScope(ActorWireframeScope const&)=delete;
+    ActorWireframeScope& operator=(ActorWireframeScope const&)=delete;
+private:
+    bool active_{};
+};
+struct ActorWireframeStats {
+    std::uint64_t partsCalled{}, partsWithCpuGeometry{}, partsWithValidTransform{};
+    std::uint64_t missingCpuGeometry{}, discardedTransforms{}, emittedSegments{};
+};
+bool installActorWireframePartHook(ll::mod::NativeMod&);
+void uninstallActorWireframePartHook();
+void beginActorWireframeFrame();
+std::vector<ActorWireSegment> takeActorWireframeSegments();
+ActorWireframeStats actorWireframeStats();
+}
