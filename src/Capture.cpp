@@ -121,6 +121,7 @@ struct Session {
     using NoteModelKey=std::tuple<std::string,int,int,std::array<float,6>,std::vector<std::string>>;
     std::map<NoteModelKey,std::uint32_t> noteCanonicalModels;
     std::uint32_t audioOnlyStatesAliased{};
+    bool audioAliasesReported{};
     bool monitoringReported{};
     bool saveRequested{};
     std::map<std::tuple<int,std::array<float,6>,std::uint32_t>,std::shared_ptr<Mesh const>> registryBoxCache;
@@ -452,8 +453,11 @@ void registerStates(Session& s,Clock::time_point started) {
     }
     s.library.registered=static_cast<std::uint32_t>(s.library.blocks.size());
     // Summarize once after all registry states have been enumerated.
-    if(s.typeCursor>=s.registrationTypes.size() && s.audioOnlyStatesAliased && !s.monitoringReported)
-        log().info("F8: {} audio-only note states share canonical visual meshes",s.audioOnlyStatesAliased);
+    if(s.typeCursor>=s.registrationTypes.size() && !s.audioAliasesReported){
+        s.audioAliasesReported=true;
+        if(s.audioOnlyStatesAliased)
+            log().info("F8: {} audio-only note states share canonical visual meshes",s.audioOnlyStatesAliased);
+    }
 }
 void registerNativeGeometry(Session& s,Clock::time_point start) {
     while(s.geometryCursor<s.geometryModels.size() &&
