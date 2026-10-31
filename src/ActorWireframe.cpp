@@ -11,6 +11,7 @@
 #include "mc/client/game/ClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/gui/screens/ScreenContext.h"
+#include "mc/deps/renderer/Camera.h"
 #include "mc/deps/core/math/Matrix.h"
 #include "mc/deps/core/math/Vec3.h"
 #include <glm/glm.hpp>
@@ -221,7 +222,7 @@ ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,
                                          BlockActorRenderData const& data){
     if(!gPreviewEnabled.load(std::memory_order_relaxed))return;
     auto const& position=data.worldPosition.get();
-    auto const& relative=data.renderPosition.get();
+    auto const& relative=data.renderPosition;
     glm::vec3 camera{};
     auto const& impl=ctx.mImpl.get();
     if(impl){
