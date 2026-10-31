@@ -1,5 +1,6 @@
 #include "Preview.h"
 #include "MeshUtils.h"
+#include "ActorWireframe.h"
 #include "ll/api/mod/NativeMod.h"
 #include "ll/api/memory/Hook.h"
 #include "mc/client/game/ClientInstance.h"
@@ -592,16 +593,79 @@ void render(BaseActorRenderContext& ctx){
     }
     restoreShader();
 }
+// F7 dedicated BlockEntity pass. Lines are derived from the live native
+// ModelPart::render transform while its original BlockActor renderer runs.
+// No collision box, BlockShape proxy or guessed facing is rendered here.
+void renderActorWireframe(BaseActorRenderContext& ctx){
+    auto segments=takeActorWireframeSegments();
+    if(!gPreviewEnabled.load(std::memory_order_relaxed)||segments.empty())return;
+    auto* level=ctx.mClientInstance.getLevelRenderer();
+    if(!level||!level->mLevelRendererPlayer)return;
+    auto const& material=level->mLevelRendererPlayer->mOutlineSelectionMaterial.get();
+    if(!material.mRenderMaterialInfoPtr.get())return;
+    auto const camera=cameraPosition(ctx);
+    auto const& view=ctx.mScreenContext.camera.viewMatrixStack.get().top()._m.get();
+    glm::vec3 const eye{camera.x,camera.y,camera.z};
+    glm::vec3 const eyeInView{view*glm::vec4(eye,1.f)};
+    glm::vec3 const zeroInView{view*glm::vec4(0.f,0.f,0.f,1.f)};
+    bool const viewAlreadySubtractsCamera=
+        std::isfinite(eyeInView.x)&&std::isfinite(eyeInView.y)&&std::isfinite(eyeInView.z)&&
+        std::isfinite(zeroInView.x)&&std::isfinite(zeroInView.y)&&std::isfinite(zeroInView.z)&&
+        glm::length(eyeInView)+.5f<glm::length(zeroInView);
+    auto& t=ctx.mScreenContext.tessellator;
+    if(segments.size()>24000)segments.resize(24000);
+    auto& shader=ctx.mScreenContext.currentShaderColor;
+    auto const previous=shader.color.get();
+    shader.color=mce::Color{1.f,.69f,.14f,1.f}; // amber = real CPU BlockEntity parts
+    shader.dirty=true;
+    using Capture=decltype(dragon::RenderMetadata::mOffscreenCaptureDescription);
+    static Capture empty{};
+    try{
+        t.begin(Tessellator::DebugContextCallback{},mce::PrimitiveMode::LineList,
+                static_cast<int>(segments.size()*2),false);
+        t.color(1.f,1.f,1.f,1.f);
+        for(auto const& s:segments){
+            for(auto const& p:{s.from,s.to}){
+                t.tex2({.5f,.5f});
+                t.vertex(p[0],p[1],p[2]);
+            }
+        }
+        auto gpu=std::make_unique<mce::Mesh>(
+            t.end(Tessellator::UploadMode::Buffered,
+                  "BSC_F7NativeActorWire",SupplementaryFieldAutoGenerationMode{0}));
+        if(gpu && gpu->isValid()){
+            auto stack=ctx.mScreenContext.camera.worldMatrixStack.get().pushIdentity(false);
+            if(!viewAlreadySubtractsCamera)
+                stack.mat->translate(-camera.x,-camera.y,-camera.z);
+            auto texture=white(*level);
+            gpu->renderMesh(ctx.mScreenContext,material,texture,0,
+                            gpu->mVertexCount.get().value_or(0u),empty.get(),nullptr);
+        }
+    }catch(...){
+        shader.color=previous;
+        shader.dirty=true;
+        throw;
+    }
+    shader.color=previous;
+    shader.dirty=true;
+}
 LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
     LevelRendererPlayer,&LevelRendererPlayer::$renderBlockEntities,
     void,BaseActorRenderContext& ctx,bool alpha) {
+    // Native renderers are invoked inside origin(). Reset per-frame data
+    // before the opaque pass, then draw the captured actor geometry just
+    // after the original native renderer (in both opaque and alpha passes).
+    if(!alpha)beginActorWireframeFrame();
     origin(ctx,alpha);
     try {
         if(!alpha) {
             {std::lock_guard guard(gResourceMutex);
              gResource=ctx.mScreenContext.tessellator.mBufferResourceService;}
             update(ctx);
-        }else ::bsc::render(ctx);
+        }
+        if(gPreviewEnabled.load(std::memory_order_relaxed))
+            renderActorWireframe(ctx);
+        if(alpha)::bsc::render(ctx);
     }catch(std::exception const& e){
         OutputDebugStringA(("BSC preview disabled after render exception: "
                             +std::string(e.what())+"\n").c_str());
