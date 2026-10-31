@@ -281,6 +281,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         }
         std::set<std::uint32_t> layers;
         std::set<std::string> writtenMeshes;
+        // Registry proxy meshes are shared across many permutations; avoid
+        // re-triangulating, re-serializing and re-hashing the same object.
+        std::map<Mesh const*,std::string> memoizedMeshes;
+        std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,TriangleBindings> memoizedBindings;
         std::set<std::string> staticModelHashes;
         std::map<std::string,std::string> staticModelIndex;
         std::map<std::string, std::uint32_t> statuses;
@@ -414,19 +418,28 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     try {
                         if(!meshRef)continue;
                         Mesh const& mesh=*meshRef;
-                        auto content = meshJson(mesh);
-                        auto hash = sha256(content);
-                        auto bindings=faceBindingJson(mesh,block);
-                        if(!writtenMeshes.contains(hash)){
-                            atomicFile(data.directory/"meshes"/(hash+".json"),content);
-                            writtenMeshes.insert(hash);
-                        }
+                        auto cachedMesh=memoizedMeshes.find(&mesh);
+                        std::string hash;
+                        if(cachedMesh==memoizedMeshes.end()){
+                            auto content=meshJson(mesh);
+                            hash=sha256(content);
+                            if(!writtenMeshes.contains(hash)){
+                                atomicFile(data.directory/"meshes"/(hash+".json"),content);
+                                writtenMeshes.insert(hash);
+                            }
+                            memoizedMeshes.emplace(&mesh,hash);
+                        }else hash=cachedMesh->second;
+                        auto bindingKey=std::make_pair(&mesh,block.textures.get());
+                        auto bindingIt=memoizedBindings.find(bindingKey);
+                        if(bindingIt==memoizedBindings.end())
+                            bindingIt=memoizedBindings.emplace(bindingKey,faceBindingJson(mesh,block)).first;
+                        auto const& bindings=bindingIt->second;
                         layers.insert(mesh.layer);
                         if (!firstMesh) blocks << ',';
                         firstMesh=false;
                         blocks << quoted(hash);
-                        perMeshTextureSlots.push_back(std::move(bindings.slots));
-                        perMeshTextureVariants.push_back(std::move(bindings.variants));
+                        perMeshTextureSlots.push_back(bindings.slots);
+                        perMeshTextureVariants.push_back(bindings.variants);
                         localUnmatched+=bindings.unresolved;
                         ++meshRefs;
                     } catch (std::exception const&) {
