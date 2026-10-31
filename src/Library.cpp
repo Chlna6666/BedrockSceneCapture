@@ -118,6 +118,39 @@ std::vector<std::uint32_t> triangulate(Mesh const& mesh) {
     }
     return triangles;
 }
+// Geometry identity ignores UV, vertex tint and render layer, but preserves
+// topology and winding. This groups stone/wood wall textures and waterlogged
+// variants by actual native shape rather than by BlockState name.
+std::string geometryShapeHash(Mesh const& mesh){
+    auto const triangles=triangulate(mesh);
+    using Point=std::array<std::int64_t,3>;
+    using Face=std::array<Point,3>;
+    std::vector<Face> faces;
+    faces.reserve(triangles.size()/3);
+    auto quantize=[](float v)->std::int64_t{
+        if(!std::isfinite(v)||std::abs(v)>4096.f)
+            throw std::runtime_error("native shape has non-finite/out-of-range vertex");
+        return static_cast<std::int64_t>(std::llround(static_cast<double>(v)*65536.));
+    };
+    for(std::size_t i=0;i<triangles.size();i+=3){
+        Face face{};
+        for(int j=0;j<3;++j){
+            auto const& v=mesh.vertices[triangles[i+static_cast<std::size_t>(j)]];
+            face[static_cast<std::size_t>(j)]={quantize(v.x),quantize(v.y),quantize(v.z)};
+        }
+        // Same directed triangle may start at any of its three corners.
+        if(face[1]<face[0]&&face[1]<=face[2])
+            std::rotate(face.begin(),face.begin()+1,face.end());
+        else if(face[2]<face[0]&&face[2]<face[1])
+            std::rotate(face.begin(),face.begin()+2,face.end());
+        faces.emplace_back(face);
+    }
+    std::sort(faces.begin(),faces.end());
+    std::ostringstream s;
+    for(auto const& face:faces)
+        for(auto const& p:face)s<<p[0]<<','<<p[1]<<','<<p[2]<<';';
+    return sha256(s.str());
+}
 struct TriangleBindings {
     std::string slots;
     std::string variants;
@@ -284,6 +317,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         // Registry proxy meshes are shared across many permutations; avoid
         // re-triangulating, re-serializing and re-hashing the same object.
         std::map<Mesh const*,std::string> memoizedMeshes;
+        std::map<Mesh const*,std::string> memoizedShapes;
+        std::set<std::string> uniqueShapeHashes;
         std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,TriangleBindings> memoizedBindings;
         std::map<std::vector<TextureBinding> const*,std::string> memoizedTextureTables;
         std::set<std::string> staticModelHashes;
@@ -452,6 +487,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 bool firstMesh=true;
                 std::vector<std::string> perMeshTextureSlots;
                 std::vector<std::string> perMeshTextureVariants;
+                std::vector<std::string> perMeshGeometryHashes;
                 std::uint64_t localUnmatched=0;
                 for (auto const& meshRef : sample.meshes) {
                     try {
@@ -468,6 +504,11 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                             }
                             memoizedMeshes.emplace(&mesh,hash);
                         }else hash=cachedMesh->second;
+                        auto shapeIt=memoizedShapes.find(&mesh);
+                        if(shapeIt==memoizedShapes.end())
+                            shapeIt=memoizedShapes.emplace(&mesh,geometryShapeHash(mesh)).first;
+                        uniqueShapeHashes.insert(shapeIt->second);
+                        perMeshGeometryHashes.push_back(shapeIt->second);
                         auto bindingKey=std::make_pair(&mesh,block.textures.get());
                         auto bindingIt=memoizedBindings.find(bindingKey);
                         if(bindingIt==memoizedBindings.end())
@@ -495,6 +536,11 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     if(i)blocks<<',';
                     blocks<<perMeshTextureVariants[i];
                 }
+                blocks << "],\"mesh_geometry_hashes\":[";
+                for(std::size_t i=0;i<perMeshGeometryHashes.size();++i){
+                    if(i)blocks<<',';
+                    blocks<<quoted(perMeshGeometryHashes[i]);
+                }
                 unmatchedFaces+=localUnmatched;
                 blocks << "],\"unresolved_texture_triangles\":" << localUnmatched
                        << ",\"missing_meshes\":" << sample.missing << '}';
@@ -515,7 +561,9 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             if (std::string_view(key)!="complete") coverage << ',';
             coverage << quoted(key) << ':' << statuses[key];
         }
-        coverage << "},\"mesh_write_failures\":" << writeFailures
+        coverage << "},\"unique_geometry_shapes\":" << uniqueShapeHashes.size()
+                 << ",\"geometry_mesh_references\":" << meshRefs
+                 << ",\"mesh_write_failures\":" << writeFailures
                  << ",\"limitations\":[\"No complete offline neighbor rules exported\","
                     "\"No fluid surface reconstruction\","
                     "\"No block entity geometry or NBT renderer\","
@@ -611,6 +659,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     "\"textures_exported\":false,"
                     "\"native_meshes_unique\":" << writtenMeshes.size()
                  << ",\"native_mesh_refs\":" << meshRefs
+                 << ",\"unique_geometry_shapes\":" << uniqueShapeHashes.size()
                  << ",\"static_geometry_models\":" << staticModelIndex.size()
                  << ",\"unresolved_texture_triangles\":" << unmatchedFaces
                  << ",\"sample_contexts\":" << samples
