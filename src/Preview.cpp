@@ -119,8 +119,26 @@ void reset() {
     gWhiteReady=false;
 }
 Vec3 cameraPosition(BaseActorRenderContext const& ctx){
-    auto const& p=ctx.mScreenContext.camera.mPosition.get();
-    return Vec3{p.x,p.y,p.z};
+    // Camera::mPosition is (0,0,0) in the BlockEntity render pass on
+    // Bedrock 1.26.51.1. Its origin is NOT the world-space player camera.
+    // Use the render-context camera (the origin used for world-relative
+    // BlockEntity geometry) so F7 lines receive exactly one subtraction.
+    auto const& impl=ctx.mImpl.get();
+    if(impl){
+        auto const& p=impl->mCameraPosition.get();
+        if(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z)){
+            if(auto const* player=ctx.mClientInstance.getLocalPlayer()){
+                auto const& q=player->getPosition();
+                // Guard against an uninitialized (0,0,0) context on a
+                // renderer pass. The fallback is the player eye, not zero.
+                float const d=std::abs(p.x-q.x)+std::abs(p.y-q.y)+std::abs(p.z-q.z);
+                if(d<128.f)return Vec3{p.x,p.y,p.z};
+            }else return Vec3{p.x,p.y,p.z};
+        }
+    }
+    if(auto const* player=ctx.mClientInstance.getLocalPlayer())
+        return player->getEyePos();
+    return Vec3{};
 }
 void line(ChunkWire& chunk,Vec3 const& a,Vec3 const& b){
     if(chunk.lines.size()>=MaxLinesPerChunk){
@@ -471,14 +489,17 @@ void render(BaseActorRenderContext& ctx){
                 "projection_diag=({:.3f},{:.3f},{:.3f}) "
                 "eye_camera=({:.2f},{:.2f},{:.2f}) "
                 "eye_origin=({:.2f},{:.2f},{:.2f}) "
-                "view_subtracts_camera={} cached_chunks={}",
+                "view_subtracts_camera={} cached_chunks={} camera_struct=({:.2f},{:.2f},{:.2f})",
                 camera.x,camera.y,camera.z,playerPos.x,playerPos.y,playerPos.z,
                 view[3][0],view[3][1],view[3][2],
                 world[3][0],world[3][1],world[3][2],
                 projection[0][0],projection[1][1],projection[2][2],
                 cameraInView.x,cameraInView.y,cameraInView.z,
                 originInView.x,originInView.y,originInView.z,
-                viewAlreadySubtractsCamera,gChunks.size());
+                viewAlreadySubtractsCamera,gChunks.size(),
+                ctx.mScreenContext.camera.mPosition.get().x,
+                ctx.mScreenContext.camera.mPosition.get().y,
+                ctx.mScreenContext.camera.mPosition.get().z);
         }
         for(auto& [key,chunk]:gChunks){
             if(!chunk.ready || !chunk.gpu || !chunk.gpu->isValid() ||
