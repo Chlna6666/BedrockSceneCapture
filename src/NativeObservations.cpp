@@ -615,6 +615,16 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         static_cast<int>(installedPartAdd)+static_cast<int>(installedPartLoad));
     return installedWorld;
 }
+NativeSceneDiagnostics nativeSceneDiagnostics(){
+    NativeSceneDiagnostics out;
+    out.tessellatorCalls=tessellatorCalls.load(std::memory_order_relaxed);
+    out.eligibleCalls=eligibleCalls.load(std::memory_order_relaxed);
+    out.acceptedCalls=acceptedCalls.load(std::memory_order_relaxed);
+    std::lock_guard lock(mutex);
+    out.distinctBlockStates=statesObserved.size();
+    out.distinctShapes=shapesObserved.size();
+    return out;
+}
 ActorCaptureDiagnostics actorCaptureDiagnostics(){
     ActorCaptureDiagnostics diagnostics;
     diagnostics.hooksInstalled={installedChest,installedSign,installedHanging,

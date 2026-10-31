@@ -17,6 +17,14 @@ struct ActorModelSnapshot {
     std::string name;
     std::string geometryJson;
 };
+struct NativeSceneDiagnostics {
+    std::uint64_t tessellatorCalls{};
+    std::uint64_t eligibleCalls{};
+    std::uint64_t acceptedCalls{};
+    std::size_t distinctBlockStates{};
+    std::size_t distinctShapes{};
+};
+NativeSceneDiagnostics nativeSceneDiagnostics();
 struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell.
     std::array<bool,6> hooksInstalled{};
