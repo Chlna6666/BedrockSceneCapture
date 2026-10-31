@@ -475,12 +475,18 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
         out<<",\"pivot\":";vec3(out,pivotPos);
         out<<",\"mirror\":"<<(box.mMirror?"true":"false")<<",\"faces\":[";
         bool const hasFaceUVs=box.mUsesFaceUVs;
+        bool completeFaceUVs=hasFaceUVs;
+        bool firstValidFace=true;
         auto const& faces=box.mFaceUVs.get();
         if(hasFaceUVs)for(std::size_t i=0;i<faces.size();++i){
             auto const& uv=faces[i].mUV.get();
             auto const& uvSize=faces[i].mUVSize.get();
-            if(!finite(uv.x)||!finite(uv.y)||!finite(uvSize.x)||!finite(uvSize.y))continue;
-            if(i)out<<',';
+            if(!finite(uv.x)||!finite(uv.y)||!finite(uvSize.x)||!finite(uvSize.y)){
+                completeFaceUVs=false;
+                continue;
+            }
+            if(!firstValidFace)out<<',';
+            firstValidFace=false;
             out<<"{\"face\":"<<i<<",\"valid\":"
                <<(faces[i].mFaceValid?"true":"false")<<",\"uv\":";
             vec2(out,uv);
@@ -490,7 +496,7 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
         }
         auto const& tex=box.mTex.get();
         out<<"],\"legacy_texture_offset\":["<<tex.x<<','<<tex.y<<']'
-           <<",\"uv_complete\":"<<(hasFaceUVs?"true":"false")<<'}';
+           <<",\"uv_complete\":"<<(completeFaceUVs?"true":"false")<<'}';
         dest.boxes.emplace_back(out.str());
     }
 }
