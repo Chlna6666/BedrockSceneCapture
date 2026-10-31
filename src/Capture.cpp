@@ -217,9 +217,9 @@ void finish(bool cancelled) {
                actorStatus.hooksInstalled[4],actorStatus.hooksInstalled[5],
                actorStatus.hooksInstalled[6],
                actorStatus.capturedModels,actorStatus.observedWithoutGeometry.size());
-    log().info("F8 native box construction hooks: add_box={}, load_boxes={}, retained_parts={}, source_boxes={}",
+    log().info("F8 native box construction hooks: add_box={}, load_boxes={}, compile_cubes={}, retained_parts={}, source_boxes={}",
                actorStatus.sourceAddBoxHook,actorStatus.sourceLoadBoxesHook,
-               actorStatus.retainedSourceParts,actorStatus.retainedSourceBoxes);
+               actorStatus.sourceCompileCubesHook,actorStatus.retainedSourceParts,actorStatus.retainedSourceBoxes);
     for(auto const& label:actorStatus.observedWithoutGeometry)
         log().warn("F8 BlockActor renderer observed but no valid native model geometry: {}",label);
     auto directory=gSession->library.directory;

@@ -36,6 +36,7 @@ struct ActorCaptureDiagnostics {
     std::size_t capturedModels{};
     bool sourceAddBoxHook{};
     bool sourceLoadBoxesHook{};
+    bool sourceCompileCubesHook{};
     std::size_t retainedSourceParts{};
     std::size_t retainedSourceBoxes{};
     std::vector<std::string> observedWithoutGeometry;
