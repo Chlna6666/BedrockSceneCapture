@@ -83,6 +83,11 @@ def validate(root: Path):
                 if any(i<0 or i>=len(vertices) for i in indices):errors.append("index bounds")
                 if any(len(vv)!=9 or any(not math.isfinite(v) for v in vv[:8]) for vv in vertices):
                     errors.append("invalid vertices")
+                if mesh.get("geometry_source")=="native_world_tessellation" and any(
+                    any(not (-2.0 <= float(coord) <= 3.0) for coord in vv[:3])
+                    for vv in vertices if len(vv)>=3
+                ):
+                    errors.append("native mesh vertices outside local block coordinate range")
                 if pos<len(face_slots):
                     tri_slots=face_slots[pos]
                     if len(tri_slots)!=len(indices)//3:errors.append("triangle binding count")
@@ -114,7 +119,12 @@ def validate(root: Path):
     if not isinstance(actor_models,list):
         actor_models=[]
         errors.append("invalid block actor model list")
+    seen_actor_models=set()
     for actor in actor_models:
+        identity=(actor.get("name"),actor.get("mesh_ref"))
+        if identity in seen_actor_models:
+            errors.append("duplicate native BlockActor model")
+        seen_actor_models.add(identity)
         digest=actor.get("mesh_ref")
         if not isinstance(digest,str) or HASH_RE.fullmatch(digest) is None:
             errors.append("invalid block actor model reference")
@@ -124,6 +134,14 @@ def validate(root: Path):
             actor_json=json.loads((root/"meshes"/(digest+".json")).read_text(encoding="utf-8"))
             if actor_json.get("source")!="native_block_actor_model_parts" or not actor_json.get("parts"):
                 errors.append("invalid native BlockActor model structure")
+            else:
+                cubes=[c for p in actor_json["parts"] for c in p.get("cubes",[])]
+                if not any(
+                    len(c.get("size",[]))==3 and
+                    all(isinstance(n,(int,float)) and math.isfinite(n) and n!=0 for n in c["size"])
+                    for c in cubes
+                ):
+                    errors.append("native BlockActor model has no nonzero geometry")
         except (OSError,ValueError) as exc:
             errors.append(f"unreadable native block actor model: {exc}")
     if manifest.get("captured_block_actor_models") not in (None,len(actor_models)):
@@ -215,6 +233,24 @@ def self_test():
         variant["neighbor_network_ids"][0]=99
         (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
         assert "native scene center does not match block state" in validate(p)["errors"]
+        # Keep a native triangle in bounded block-local coordinates.
+        # The historical F8 exporter double-subtracted world BlockPos,
+        # producing invalid coordinates like (-352, -64, -304).
+        badmesh={"topology":"triangles","uv_complete":False,
+            "geometry_source":"native_world_tessellation","uv_space":"runtime_terrain_atlas",
+            "vertices":[[-352,0,0,0,0,1,0,0,4294967295]],
+            "indices":[]}
+        badraw=(json.dumps(badmesh,separators=(",",":"))+"\\n").encode()
+        badhash=hashlib.sha256(badraw).hexdigest()
+        (p/"meshes"/(badhash+".json")).write_bytes(badraw)
+        variant["mesh_refs"]=[badhash]
+        variant["mesh_triangle_texture_slots"]=[[]]
+        variant["mesh_triangle_texture_variant_indices"]=[[]]
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        assert "native mesh vertices outside local block coordinate range" in validate(p)["errors"]
+        variant["mesh_refs"]=[local_hash]
+        variant["mesh_triangle_texture_slots"]=[[2]]
+        variant["mesh_triangle_texture_variant_indices"]=[[None]]
         variant.pop("capture_source")
         variant.pop("neighbor_network_ids")
         state.pop("network_id")
