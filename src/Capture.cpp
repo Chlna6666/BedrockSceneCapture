@@ -186,6 +186,8 @@ void collectNativeSamples(Session& s) {
         sample.neighborhood="native_scene";
         sample.nativeObserved=true;
         sample.neighborStateIds=event.stateIds;
+        sample.observedBlockPosition=event.observedBlockPosition;
+        sample.positionVariantCandidate=event.positionVariantCandidate;
         sample.meshes.emplace_back(std::make_shared<Mesh const>(std::move(event.mesh)));
         block.samples.emplace_back(std::move(sample));
         ++s.library.sampledBlocks;

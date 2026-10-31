@@ -12,6 +12,8 @@ struct NativeObservation {
     // Order: center, then dy/dz/dx ascending (-1..1), excluding center.
     std::array<std::uint32_t,27> stateIds{};
     Mesh mesh;
+    std::array<int,3> observedBlockPosition{};
+    bool positionVariantCandidate{};
 };
 struct ActorModelSnapshot {
     std::string name;

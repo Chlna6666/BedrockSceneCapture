@@ -14,6 +14,8 @@ struct ModelSample {
     std::uint32_t missing{};
     bool nativeObserved{};
     std::array<std::uint32_t,27> neighborStateIds{};
+    std::array<int,3> observedBlockPosition{};
+    bool positionVariantCandidate{};
 };
 struct TextureUVVariant {
     std::uint32_t variant{},frame{};

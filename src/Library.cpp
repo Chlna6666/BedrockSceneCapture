@@ -498,7 +498,12 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                         if(n)blocks<<',';
                         blocks<<sample.neighborStateIds[n];
                     }
-                    blocks<<']';
+                    blocks<<"],\"observation_position\":["
+                          <<sample.observedBlockPosition[0]<<','
+                          <<sample.observedBlockPosition[1]<<','
+                          <<sample.observedBlockPosition[2]<<']'
+                          <<",\"position_variant_candidate\":"
+                          <<(sample.positionVariantCandidate?"true":"false");
                 }
                 std::vector<std::string> perMeshSharedGeometry;
                 std::vector<std::string> perMeshSharedAppearance;

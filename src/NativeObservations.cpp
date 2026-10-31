@@ -39,13 +39,13 @@ namespace {
 std::atomic_bool armed{false};
 std::mutex mutex;
 struct IdHash {
-    std::size_t operator()(std::array<std::uint32_t,27> const& values) const noexcept {
+    std::size_t operator()(std::array<std::uint32_t,29> const& values) const noexcept {
         std::size_t h=0x9e3779b9u;
         for(auto v:values)h ^= static_cast<std::size_t>(v)+0x9e3779b9u+(h<<6)+(h>>2);
         return h;
     }
 };
-std::unordered_set<std::array<std::uint32_t,27>,IdHash> seen;
+std::unordered_set<std::array<std::uint32_t,29>,IdHash> seen;
 std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
 // Capture native box inputs at model construction, before their CPU Cube
@@ -82,6 +82,31 @@ bool requiredWorldShape(BlockGraphics const& gfx){
     auto const& box=gfx.mVisualShape.get();
     return !(box.min.x==0.f&&box.min.y==0.f&&box.min.z==0.f&&
              box.max.x==1.f&&box.max.y==1.f&&box.max.z==1.f);
+}
+bool mayVaryByPosition(BlockShape shape){
+    // Crossed plants may have deterministic per-position offsets or varying
+    // orientation even with identical block state and 3x3x3 neighborhood.
+    switch(shape){
+    case BlockShape::CrossTexture:
+    case BlockShape::DoublesidedCrossTexture:
+    case BlockShape::DoublesidedWideCrossTexture:
+    case BlockShape::DoublePlant:
+    case BlockShape::DoublesidedDoublePlant:
+    case BlockShape::Rows:
+    case BlockShape::DoublesidedRows:
+    case BlockShape::Stem:
+    case BlockShape::Seagrass:
+    case BlockShape::Kelp:
+    case BlockShape::SweetBerryBush:
+    case BlockShape::PitcherCrop:
+    case BlockShape::PitcherPlant:
+    case BlockShape::FlowerBed:
+    case BlockShape::CaveVine:
+    case BlockShape::Eyeblossom:
+    case BlockShape::FireflyBush:
+        return true;
+    default:return false;
+    }
 }
 std::string quote(std::string const& s){
     std::ostringstream o;
@@ -365,6 +390,13 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
                 ids[next++]=region->getBlock(BlockPos{
                     pos.x+dx,pos.y+dy,pos.z+dz}).mNetworkId;
             }
+    std::array<std::uint32_t,29> sceneKey{};
+    std::copy(ids.begin(),ids.end(),sceneKey.begin());
+    bool const positionVariant=mayVaryByPosition(gfx->mBlockShape);
+    if(positionVariant){
+        sceneKey[27]=static_cast<std::uint32_t>(pos.x);
+        sceneKey[28]=static_cast<std::uint32_t>(pos.z);
+    }
     std::unique_lock lock(mutex,std::try_to_lock);
     auto const shape=static_cast<int>(gfx->mBlockShape);
     if(!lock.owns_lock())return;
@@ -372,7 +404,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
        shapesObserved[shape]>=MaxDistinctPerShape||
        statesObserved[block.mNetworkId]>=MaxDistinctPerState||
        recordedVertices+points.size()-fromPos>MaxTotalVertices||
-       !seen.emplace(ids).second)return;
+       !seen.emplace(sceneKey).second)return;
     Mesh mesh;
     mesh.primitive=static_cast<std::uint32_t>(raw.mMode);
     mesh.layer=static_cast<std::uint32_t>(gfx->mRenderLayer);
@@ -399,7 +431,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
         mesh.indices.reserve(indices.size()-fromIdx);
         for(auto i=fromIdx;i<indices.size();++i){
             if(indices[i]<fromPos || indices[i]>=points.size()){
-                seen.erase(ids);
+                seen.erase(sceneKey);
                 return;
             }
             mesh.indices.emplace_back(indices[i]-static_cast<std::uint32_t>(fromPos));
@@ -407,7 +439,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     }
     // Only topologies supported by Library::triangulate are safe to publish.
     if(mesh.primitive<1||mesh.primitive>3){
-        seen.erase(ids);
+        seen.erase(sceneKey);
         return;
     }
     reconstructMissingNormals(mesh);
@@ -416,7 +448,9 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     ++statesObserved[block.mNetworkId];
     acceptedCalls.fetch_add(1,std::memory_order_relaxed);
     addCapturePreview(pos,mesh);
-    pending.push_back(NativeObservation{ids,std::move(mesh)});
+    pending.push_back(NativeObservation{
+        ids,std::move(mesh),{pos.x,pos.y,pos.z},positionVariant
+    });
 }
 // Capture at construction time: numerous BlockActor models retain only a
 // compiled render mesh by the time the F8 observation begins.
