@@ -63,6 +63,7 @@ constexpr unsigned MaxChunkMeshes=512;
 constexpr unsigned RefreshFrames=120;
 // Avoid endlessly re-tessellating unchanged chunks while the player is exploring.
 constexpr unsigned RebuildFrames=3600;
+bool gOverlayInstalled{};
 constexpr std::size_t MaxCaptureSections=384;
 constexpr std::size_t MaxCaptureSegments=250000;
 constexpr std::size_t MaxCaptureSectionSegments=12000;
@@ -648,9 +649,24 @@ std::weak_ptr<mce::BufferResourceService> renderBufferService(){
     return gResource;
 }
 bool installPreview(ll::mod::NativeMod& mod){
+    // Idempotent: F7 and F8 can both request the overlay during a session.
+    // Never patch the renderer in LeviLamina's synchronous mod enable path.
+    if(gOverlayInstalled)return true;
     gPreviewMod=&mod;
     gLastTransformDiagnostic={};
-    return BSCOverlayHook::hook()==0;
+    gOverlayInstalled=(BSCOverlayHook::hook()==0);
+    if(!gOverlayInstalled)gPreviewMod=nullptr;
+    return gOverlayInstalled;
 }
-void uninstallPreview(){BSCOverlayHook::unhook();reset();gPreviewEnabled.store(false);gPreviewMod=nullptr;}
+void uninstallPreview(){
+    // installPreview can have been skipped entirely (no F7/F8 requested).
+    // Avoid asking the hook framework to undo a hook never installed.
+    if(gOverlayInstalled){
+        BSCOverlayHook::unhook();
+        gOverlayInstalled=false;
+    }
+    reset();
+    gPreviewEnabled.store(false);
+    gPreviewMod=nullptr;
+}
 } // namespace bsc

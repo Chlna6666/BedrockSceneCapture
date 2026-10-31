@@ -26,10 +26,7 @@ public:
         if(!installCapture()) {
             mod.getLogger().error("BSC enable failed at player tick hook");return false;
         }
-        mod.getLogger().info("BSC enable [2/4]: installing overlay render hook");
-        if(!installPreview(mod)){
-            uninstallCapture();mod.getLogger().error("BSC enable failed at overlay render hook");return false;
-        }
+        mod.getLogger().info("BSC enable [2/4]: overlay render hook deferred until F7 / in-world F8");
         mod.getLogger().info("BSC enable [3/4]: installing menu update hook");
         if(!installMenuCapture())
             mod.getLogger().warn("BSC menu hook unavailable: in-world F8 remains usable");
@@ -41,7 +38,7 @@ public:
         std::filesystem::create_directories(controls,controlError);
         if(controlError)
             mod.getLogger().warn("BSC control directory unavailable: {}: {}",controls.string(),controlError.message());
-        mod.getLogger().info("BSC enabled: F7 wireframe, F8 registry/model export (native hooks installed on F8), F9 cancel");
+        mod.getLogger().info("BSC enabled: on-demand F7 render hook, F8 model export with deferred native hooks, F9 cancel");
         mod.getLogger().info("BSC remote control directory: {}",controls.string());
         mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"export"/"1.26.51.1").string());
         return true;

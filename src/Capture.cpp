@@ -237,6 +237,9 @@ void begin(LocalPlayer* player) {
         return;
     }
     if(player){
+        log().info("F8: installing red native-scene overlay on demand");
+        if(!installPreview(*gMod))
+            log().warn("F8 red overlay unavailable; model export continues");
         log().info("F8: initializing native hooks on demand (not during LeviLamina startup)");
         if(!installNativeObservations(*gMod))
             log().warn("F8: BlockTessellator hook unavailable; registry capture can still run");
@@ -588,9 +591,15 @@ void onTick(LocalPlayer& player) {
     bool cancel=(f9&&!wasF9)||command==ControlCommand::Cancel;
     wasF7=f7;wasF8=f8;wasF9=f9;
     if(toggle){
-        bool on=!gPreviewEnabled.load();
-        gPreviewEnabled.store(on);
-        log().info("F7 triangle and vertex debug view {}",on?"on":"off");
+        bool const on=!gPreviewEnabled.load();
+        if(on){
+            log().info("F7: installing overlay render hook on demand");
+            if(!installPreview(*gMod))
+                log().error("F7: overlay render hook installation failed");
+            else gPreviewEnabled.store(true);
+        }else gPreviewEnabled.store(false);
+        log().info("F7 triangle and vertex debug view {}",
+                   gPreviewEnabled.load()?"on":"off");
     }
     try{
         if(command==ControlCommand::Status)reportControlStatus("world");
