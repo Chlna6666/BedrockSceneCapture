@@ -54,7 +54,11 @@ std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
 // Capture native box inputs at model construction, before their CPU Cube
 // definitions can be compacted into GPU meshes. These are not synthetic AABBs.
-struct SourceBoxes {bool fromGeometryResource{};std::vector<std::string> boxes;};
+struct SourceBoxes {
+    bool fromGeometryResource{};
+    bool fromCompiledCubes{};
+    std::vector<std::string> boxes;
+};
 std::mutex sourceBoxesMutex;
 std::unordered_map<ModelPart const*,SourceBoxes> sourceBoxes;
 constexpr std::size_t MaxSourceParts=8192;
@@ -484,7 +488,8 @@ LL_TYPE_INSTANCE_HOOK(BSCPartAddBoxHook,ll::memory::HookPriority::Normal,
         it=sourceBoxes.try_emplace(this).first;
     }
     auto& dest=it->second;
-    if(dest.fromGeometryResource || dest.boxes.size()>=MaxSourceBoxesPerPart)return;
+    if(dest.fromGeometryResource || dest.fromCompiledCubes ||
+       dest.boxes.size()>=MaxSourceBoxesPerPart)return;
     std::ostringstream out;
     out.imbue(std::locale::classic());
     out<<std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -494,6 +499,77 @@ LL_TYPE_INSTANCE_HOOK(BSCPartAddBoxHook,ll::memory::HookPriority::Normal,
     out<<",\"mirror\":"<<(mirror?"true":"false")
        <<",\"inflate\":"<<inflate<<",\"uv_complete\":false}";
     dest.boxes.emplace_back(out.str());
+}
+// Preserve the full native Cube definition just before GPU compilation can
+// discard CPU-side geometry. Unlike addBox parameters, this includes UV per
+// face and the final cube pivot, mirror and rotation.
+LL_TYPE_INSTANCE_HOOK(BSCPartCompileCubesHook,ll::memory::HookPriority::Normal,
+    ModelPart,&ModelPart::compileCubes,void,Tessellator& tess) {
+    if(armed.load(std::memory_order_relaxed)){
+        auto const& cubes=this->mCubes.get();
+        if(!cubes.empty() && cubes.size()<=MaxSourceBoxesPerPart){
+            std::unique_lock lock(sourceBoxesMutex,std::try_to_lock);
+            if(lock.owns_lock()){
+                auto it=sourceBoxes.find(this);
+                if(it==sourceBoxes.end()){
+                    if(sourceBoxes.size()<MaxSourceParts)
+                        it=sourceBoxes.try_emplace(this).first;
+                }
+                if(it!=sourceBoxes.end() && !it->second.fromGeometryResource){
+                    std::vector<std::string> compiled;
+                    compiled.reserve(cubes.size());
+                    auto finite=[](float v){return std::isfinite(v)&&std::abs(v)<=1024.f;};
+                    for(auto const& cube:cubes){
+                        auto const& originPos=cube.mOrigin.get();
+                        auto const& size=cube.mSize.get();
+                        auto const& rotation=cube.mRotation.get();
+                        auto const& pivot=cube.mCubePivot.get();
+                        if(!finite(originPos.x)||!finite(originPos.y)||!finite(originPos.z)||
+                           !finite(size.x)||!finite(size.y)||!finite(size.z)||
+                           !finite(rotation.x)||!finite(rotation.y)||!finite(rotation.z)||
+                           !finite(pivot.x)||!finite(pivot.y)||!finite(pivot.z)||
+                           size.x==0.f||size.y==0.f||size.z==0.f)continue;
+                        std::ostringstream o;
+                        o.imbue(std::locale::classic());
+                        o<<std::setprecision(std::numeric_limits<float>::max_digits10);
+                        o<<"{\"source\":\"native_modelpart_compile_cubes\",\"origin\":";
+                        vec3(o,originPos);
+                        o<<",\"size\":";vec3(o,size);
+                        o<<",\"rotation\":";vec3(o,rotation);
+                        o<<",\"pivot\":";vec3(o,pivot);
+                        o<<",\"mirror\":"<<(cube.mMirrored?"true":"false")<<",\"faces\":[";
+                        bool first=true;
+                        bool complete=true;
+                        auto const& faces=cube.mFaceData.get();
+                        for(std::size_t i=0;i<faces.size();++i){
+                            auto const& uv=faces[i].mUV.get();
+                            auto const& extent=faces[i].mUVSize.get();
+                            if(!finite(uv.x)||!finite(uv.y)||
+                               !finite(extent.x)||!finite(extent.y)){
+                                complete=false;
+                                continue;
+                            }
+                            if(!first)o<<',';
+                            first=false;
+                            o<<"{\"face\":"<<i<<",\"valid\":"
+                             <<(faces[i].mFaceValid?"true":"false")
+                             <<",\"uv\":";vec2(o,uv);
+                            o<<",\"uv_size\":";vec2(o,extent);
+                            o<<",\"material_index\":"<<faces[i].mMaterialInstanceListIndex
+                             <<",\"uv_rotation\":"<<static_cast<int>(faces[i].mUvRotation)<<'}';
+                        }
+                        o<<"],\"uv_complete\":"<<(complete?"true":"false")<<'}';
+                        compiled.push_back(o.str());
+                    }
+                    if(!compiled.empty()){
+                        it->second.fromCompiledCubes=true;
+                        it->second.boxes=std::move(compiled);
+                    }
+                }
+            }
+        }
+    }
+    origin(tess);
 }
 LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
     ModelPart,&ModelPart::loadBoxes,void,
@@ -626,7 +702,7 @@ LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
         &model.mArmBase.get(),&model.mArm.get(),&model.mFront.get()
     });
 }
-bool installedPartAdd{},installedPartLoad{};
+bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
      installedBed{},installedShulker{},installedBell{},installedPiston{};
 }
@@ -665,13 +741,16 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         []{return BSCPartAddBoxHook::hook();});
     install("ModelPart::loadBoxes",installedPartLoad,
         []{return BSCPartLoadBoxesHook::hook();});
-    logger.info("F8 native hooks initialized: world={}, actors={}/7, source_box_hooks={}/2",
+    install("ModelPart::compileCubes",installedPartCompile,
+        []{return BSCPartCompileCubesHook::hook();});
+    logger.info("F8 native hooks initialized: world={}, actors={}/7, source_box_hooks={}/3",
         installedWorld,
         static_cast<int>(installedChest)+static_cast<int>(installedSign)+
         static_cast<int>(installedHanging)+static_cast<int>(installedBed)+
         static_cast<int>(installedShulker)+static_cast<int>(installedBell)+
         static_cast<int>(installedPiston),
-        static_cast<int>(installedPartAdd)+static_cast<int>(installedPartLoad));
+        static_cast<int>(installedPartAdd)+static_cast<int>(installedPartLoad)+
+        static_cast<int>(installedPartCompile));
     return installedWorld;
 }
 void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
@@ -755,6 +834,7 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
     diagnostics.capturedModels=recordedActorLabels.size();
     diagnostics.sourceAddBoxHook=installedPartAdd;
     diagnostics.sourceLoadBoxesHook=installedPartLoad;
+    diagnostics.sourceCompileCubesHook=installedPartCompile;
     {
         std::lock_guard sourceLock(sourceBoxesMutex);
         diagnostics.retainedSourceParts=sourceBoxes.size();
@@ -811,6 +891,7 @@ std::vector<ActorModelSnapshot> takeActorModels(){
 }
 void uninstallNativeObservations(){
     armed.store(false,std::memory_order_release);
+    if(installedPartCompile){BSCPartCompileCubesHook::unhook();installedPartCompile=false;}
     if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}
     if(installedPartAdd){BSCPartAddBoxHook::unhook();installedPartAdd=false;}
     {std::lock_guard lock(sourceBoxesMutex);sourceBoxes.clear();}
