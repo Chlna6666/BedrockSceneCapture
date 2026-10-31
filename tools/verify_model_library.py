@@ -24,10 +24,30 @@ def validate(root: Path):
     expected_hashes=set()
     refs=0
     unknown_triangles=0
+    by_network_id={
+        b.get("network_id"):b for b in states
+        if isinstance(b.get("network_id"),int) and not isinstance(b.get("network_id"),bool)
+    }
     for b in states:
         status=b.get("status")
         if status not in counts:errors.append("invalid coverage status")
         else:counts[status]+=1
+        alias=b.get("geometry_alias_network_id")
+        if alias is not None:
+            source=by_network_id.get(alias)
+            if (not isinstance(alias,int) or isinstance(alias,bool) or
+                source is None or source is b or
+                source.get("name")!=b.get("name") or
+                source.get("geometry_alias_network_id") is not None or
+                not any(v.get("neighborhood")=="registry_visual_bounds"
+                        for v in source.get("variants",[]))):
+                errors.append("invalid canonical geometry state reference")
+            if b.get("variants"):
+                errors.append("audio-only alias duplicates geometry samples")
+            if b.get("name") not in (
+                "minecraft:noteblock","minecraft:note_block","noteblock","note_block"
+            ):
+                errors.append("visual alias is not a verified audio-only block")
         bindings={x["slot"]:x for x in b.get("texture_bindings",[])}
         slots=set(bindings)
         if len(bindings)!=len(b.get("texture_bindings",[])):
@@ -224,6 +244,28 @@ def self_test():
         for name in ("blocks.json","manifest.json"):
             (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
         assert validate(p)["valid"],"face-local slot must be resolvable without atlas"
+        # No duplicated geometry is required for an audio-only pitch change:
+        # preserve its BlockState but reference the original model by ID.
+        state["name"]="minecraft:noteblock"
+        state["network_id"]=42
+        second={"name":"minecraft:noteblock","network_id":43,
+                "geometry_alias_network_id":42,"status":"partial",
+                "texture_bindings":[],"variants":[]}
+        examples["blocks.json"]["blocks"].append(second)
+        examples["manifest.json"]["registered_block_states"]=2
+        examples["coverage.json"]["counts"]["partial"]=2
+        for name in ("blocks.json","manifest.json","coverage.json"):
+            (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
+        assert validate(p)["valid"],"audio-only state alias must resolve to canonical geometry"
+        second["geometry_alias_network_id"]=9999
+        (p/"blocks.json").write_text(json.dumps(examples["blocks.json"]),encoding="utf-8")
+        assert "invalid canonical geometry state reference" in validate(p)["errors"]
+        examples["blocks.json"]["blocks"].pop()
+        examples["manifest.json"]["registered_block_states"]=1
+        examples["coverage.json"]["counts"]["partial"]=1
+        for name in ("blocks.json","manifest.json","coverage.json"):
+            (p/name).write_text(json.dumps(examples[name]),encoding="utf-8")
+
         # Passive native scene uses exact center and 26-neighbor state IDs.
         variant["capture_source"]="native_block_tessellator"
         state["network_id"]=42
