@@ -598,19 +598,24 @@ void render(BaseActorRenderContext& ctx){
 // No collision box, BlockShape proxy or guessed facing is rendered here.
 void renderActorWireframe(BaseActorRenderContext& ctx){
     auto segments=takeActorWireframeSegments();
-    if(!gPreviewEnabled.load(std::memory_order_relaxed))return;
+    bool const f7=gPreviewEnabled.load(std::memory_order_relaxed);
+    bool const f8=gCapturePreviewEnabled.load(std::memory_order_relaxed);
+    if(!f7&&!f8)return;
     static Clock::time_point lastReport{};
     if(gPreviewMod && (lastReport.time_since_epoch().count()==0||
         Clock::now()-lastReport>std::chrono::seconds(8))){
         lastReport=Clock::now();
         auto const stats=actorWireframeStats();
         gPreviewMod->getLogger().info(
-            "F7 BlockEntity native wireframe: part_calls={}, with_cpu_geometry={}, "
+            "F7/F8 BlockEntity native wireframe: part_calls={}, with_cpu_geometry={}, "
             "valid_transforms={}, missing_geometry={}, invalid_transforms={}, "
-            "total_segments={}, current_pass_segments={}",
+            "total_segments={}, current_pass_segments={}, "
+            "actor_data_constructed={}, destroyed={}, buffers_flushed={}, f7={}, f8={}",
             stats.partsCalled,stats.partsWithCpuGeometry,
             stats.partsWithValidTransform,stats.missingCpuGeometry,
-            stats.discardedTransforms,stats.emittedSegments,segments.size());
+            stats.discardedTransforms,stats.emittedSegments,segments.size(),
+            stats.actorDataConstructed,stats.actorDataDestroyed,
+            stats.actorBuffersFlushed,f7,f8);
     }
     if(segments.empty())return;
     auto* level=ctx.mClientInstance.getLevelRenderer();
@@ -630,7 +635,10 @@ void renderActorWireframe(BaseActorRenderContext& ctx){
     if(segments.size()>24000)segments.resize(24000);
     auto& shader=ctx.mScreenContext.currentShaderColor;
     auto const previous=shader.color.get();
-    shader.color=mce::Color{1.f,.69f,.14f,1.f}; // amber = real CPU BlockEntity parts
+    // F8 red = live BlockEntity geometry; F7 amber = same native model
+    // visualized independently from the ordinary cyan block wireframe.
+    shader.color=f8?mce::Color{1.f,.18f,.24f,1.f}:
+                    mce::Color{1.f,.69f,.14f,1.f};
     shader.dirty=true;
     using Capture=decltype(dragon::RenderMetadata::mOffscreenCaptureDescription);
     static Capture empty{};
@@ -646,7 +654,7 @@ void renderActorWireframe(BaseActorRenderContext& ctx){
         }
         auto gpu=std::make_unique<mce::Mesh>(
             t.end(Tessellator::UploadMode::Buffered,
-                  "BSC_F7NativeActorWire",SupplementaryFieldAutoGenerationMode{0}));
+                  "BSC_NativeBlockActorWire",SupplementaryFieldAutoGenerationMode{0}));
         if(gpu && gpu->isValid()){
             auto stack=ctx.mScreenContext.camera.worldMatrixStack.get().pushIdentity(false);
             if(!viewAlreadySubtractsCamera)
@@ -670,6 +678,9 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
     // before the opaque pass, then draw the captured actor geometry just
     // after the original native renderer (in both opaque and alpha passes).
     if(!alpha)beginActorWireframeFrame();
+    if(gPreviewEnabled.load(std::memory_order_relaxed)||
+       gCapturePreviewEnabled.load(std::memory_order_relaxed))
+        updateActorWireframeCamera(cameraPosition(ctx));
     origin(ctx,alpha);
     try {
         if(!alpha) {
@@ -677,7 +688,8 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
              gResource=ctx.mScreenContext.tessellator.mBufferResourceService;}
             update(ctx);
         }
-        if(gPreviewEnabled.load(std::memory_order_relaxed))
+        if(gPreviewEnabled.load(std::memory_order_relaxed)||
+           gCapturePreviewEnabled.load(std::memory_order_relaxed))
             renderActorWireframe(ctx);
         if(alpha)::bsc::render(ctx);
     }catch(std::exception const& e){

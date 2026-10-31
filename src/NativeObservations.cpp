@@ -779,11 +779,16 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
         []{return BSCLecternWireHook::hook();});
 }
 bool installActorWireframeObservations(ll::mod::NativeMod& mod){
-    // The dispatcher overload requires a non-constant MSVC imported member
-    // pointer, which cannot be used by LL_TYPE_INSTANCE_HOOK. Hook each
-    // actual renderer thunk instead; these include exact BlockActorRenderData.
-    installActorRenderHooks(mod);
-    return installActorWireframePartHook(mod);
+    // First use the common BlockActorRenderData constructor/destructor pair.
+    // Renderer-specific thunks remain a fallback for runtime builds where
+    // the data constructor is inlined, bypassed or cannot be patched.
+    bool const universal=installUniversalActorDataHook(mod);
+    if(!universal)installActorRenderHooks(mod);
+    bool const parts=installActorWireframePartHook(mod);
+    return parts && (universal || installedChest || installedSign ||
+                     installedHanging || installedBed || installedShulker ||
+                     installedBell || installedPiston || installedBanner ||
+                     installedPot || installedConduit || installedLectern);
 }
 bool installNativeObservations(ll::mod::NativeMod& mod){
     if(installedWorld)return true;
@@ -797,6 +802,12 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
     };
     install("BlockTessellator::tessellateInWorld",installedWorld,
         []{return BSCNativeBlockHook::hook();});
+    // F8 red preview and F7 amber preview consume the same live CPU geometry.
+    // Hooking only renderer-specific model collectors could never produce a
+    // complete F8 red BlockEntity preview.
+    if(!installUniversalActorDataHook(mod))
+        logger.warn("F8 universal BlockEntity render data hook unavailable");
+    installActorWireframePartHook(mod);
     installActorRenderHooks(mod);
     install("ModelPart::addBox",installedPartAdd,
         []{return BSCPartAddBoxHook::hook();});
