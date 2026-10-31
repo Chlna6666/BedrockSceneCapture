@@ -25,6 +25,40 @@ def validate(root: Path):
     refs=0
     unknown_triangles=0
     observed_shapes=set()
+    shared_version=manifest.get("shared_geometry_pool_schema")
+    pool_index=None
+    geometry_cache={}
+    appearance_cache={}
+    seen_geometries=set()
+    seen_appearances=set()
+    if shared_version is not None:
+        if shared_version!=2:
+            errors.append("unsupported shared geometry pool schema")
+        try:
+            pool_index=json.loads((root/"geometry_pool.json").read_text(encoding="utf-8"))
+        except (OSError,ValueError) as exc:
+            errors.append(f"missing shared geometry pool index: {exc}")
+            pool_index={}
+        if pool_index.get("schema")!=2 or pool_index.get("legacy_meshes_retained") is not True:
+            errors.append("invalid shared geometry pool index")
+    def load_shared(kind,digest):
+        cache=geometry_cache if kind=="geometry" else appearance_cache
+        if not isinstance(digest,str) or HASH_RE.fullmatch(digest) is None:
+            errors.append(f"invalid shared {kind} hash")
+            return None
+        if digest in cache:
+            return cache[digest]
+        try:
+            raw=(root/"geometry_pool"/kind/(digest+".json")).read_bytes()
+            if hashlib.sha256(raw).hexdigest()!=digest:
+                errors.append(f"shared {kind} checksum mismatch")
+            obj=json.loads(raw)
+        except (OSError,ValueError) as exc:
+            errors.append(f"unreadable shared {kind} {digest}: {exc}")
+            cache[digest]=None
+            return None
+        cache[digest]=obj
+        return obj
     by_network_id={
         b.get("network_id"):b for b in states
         if isinstance(b.get("network_id"),int) and not isinstance(b.get("network_id"),bool)
@@ -80,6 +114,48 @@ def validate(root: Path):
             meshes=v.get("mesh_refs",[])
             face_slots=v.get("mesh_triangle_texture_slots",[])
             variant_slots=v.get("mesh_triangle_texture_variant_indices",[])
+            if shared_version==2:
+                grefs=v.get("shared_geometry_refs",[])
+                arefs=v.get("shared_appearance_refs",[])
+                if len(grefs)!=len(meshes) or len(arefs)!=len(meshes):
+                    errors.append("shared mesh reference count mismatch")
+                for pos,(gref,aref) in enumerate(zip(grefs,arefs)):
+                    geom=load_shared("geometry",gref)
+                    appearance=load_shared("appearance",aref)
+                    if geom is None or appearance is None:
+                        continue
+                    seen_geometries.add(gref)
+                    seen_appearances.add(aref)
+                    if geom.get("schema")!=2 or geom.get("topology")!="triangles":
+                        errors.append("shared geometry schema/topology")
+                    if appearance.get("schema")!=2 or appearance.get("geometry_ref")!=gref:
+                        errors.append("shared appearance geometry mismatch")
+                    points=geom.get("vertices",[])
+                    triangles=geom.get("triangles",[])
+                    if not isinstance(points,list) or not isinstance(triangles,list):
+                        errors.append("invalid shared geometry arrays")
+                        continue
+                    if any(
+                        not isinstance(p,list) or len(p)!=3 or
+                        any(not isinstance(n,(int,float)) or not math.isfinite(n) for n in p)
+                        for p in points):
+                        errors.append("non-finite shared vertex position")
+                    if any(
+                        not isinstance(t,list) or len(t)!=3 or
+                        any(not isinstance(i,int) or i<0 or i>=len(points) for i in t)
+                        for t in triangles):
+                        errors.append("invalid shared geometry triangle")
+                    attrs=appearance.get("corner_attributes",[])
+                    if len(attrs)!=3*len(triangles) or any(
+                        not isinstance(a,list) or len(a)!=6 or
+                        any(not isinstance(n,(int,float)) or not math.isfinite(n) for n in a)
+                        for a in attrs):
+                        errors.append("shared corner attributes misaligned")
+                    if (len(appearance.get("triangle_texture_slots",[]))!=len(triangles) or
+                        len(appearance.get("triangle_texture_variant_indices",[]))!=len(triangles)):
+                        errors.append("shared triangle texture bindings misaligned")
+                    if pos<len(face_slots) and len(face_slots[pos])!=len(triangles):
+                        errors.append("shared/legacy triangle count mismatch")
             shape_hashes=v.get("mesh_geometry_hashes")
             if shape_hashes is not None:
                 if not isinstance(shape_hashes,list) or len(shape_hashes)!=len(meshes):
@@ -201,6 +277,16 @@ def validate(root: Path):
             errors.append("mesh content hash mismatch")
     if counts!=coverage.get("counts"):errors.append("coverage counts")
     if refs!=manifest.get("native_mesh_refs"):errors.append("native reference count")
+    if shared_version==2:
+        if manifest.get("shared_geometry_count")!=len(seen_geometries):
+            errors.append("shared geometry count mismatch")
+        if manifest.get("shared_appearance_count")!=len(seen_appearances):
+            errors.append("shared appearance count mismatch")
+        if pool_index is not None and (
+            set(pool_index.get("geometry",[]))!=seen_geometries or
+            set(pool_index.get("appearance",[]))!=seen_appearances
+        ):
+            errors.append("shared pool index differs from state references")
     if len(static.get("models",[]))!=manifest.get("static_geometry_models"):
         errors.append("static model count")
     if unknown_triangles!=manifest.get("unresolved_texture_triangles"):
