@@ -211,10 +211,10 @@ LL_TYPE_INSTANCE_HOOK(BSCActorPartWireHook,ll::memory::HookPriority::Normal,
     ModelPart,&ModelPart::render,void,
     ScreenContext& screen,Model& model,float scale,bool hideParentBodyPart,
     uint count,Matrix boneToEntitySpaceMatrix){
-    // Observe the renderer's live bone transform, after the original draw
-    // has applied any per-frame animation state.
-    origin(screen,model,scale,hideParentBodyPart,count,boneToEntitySpaceMatrix);
+    // The renderer has already configured the bone pose. Capture while the
+    // parent model matrix is still on the stack; the original call may pop it.
     observePart(*this,screen,scale,boneToEntitySpaceMatrix);
+    origin(screen,model,scale,hideParentBodyPart,count,boneToEntitySpaceMatrix);
 }
 } // namespace
 ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,

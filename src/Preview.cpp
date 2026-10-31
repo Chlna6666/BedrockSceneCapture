@@ -598,7 +598,21 @@ void render(BaseActorRenderContext& ctx){
 // No collision box, BlockShape proxy or guessed facing is rendered here.
 void renderActorWireframe(BaseActorRenderContext& ctx){
     auto segments=takeActorWireframeSegments();
-    if(!gPreviewEnabled.load(std::memory_order_relaxed)||segments.empty())return;
+    if(!gPreviewEnabled.load(std::memory_order_relaxed))return;
+    static Clock::time_point lastReport{};
+    if(gPreviewMod && (lastReport.time_since_epoch().count()==0||
+        Clock::now()-lastReport>std::chrono::seconds(8))){
+        lastReport=Clock::now();
+        auto const stats=actorWireframeStats();
+        gPreviewMod->getLogger().info(
+            "F7 BlockEntity native wireframe: part_calls={}, with_cpu_geometry={}, "
+            "valid_transforms={}, missing_geometry={}, invalid_transforms={}, "
+            "total_segments={}, current_pass_segments={}",
+            stats.partsCalled,stats.partsWithCpuGeometry,
+            stats.partsWithValidTransform,stats.missingCpuGeometry,
+            stats.discardedTransforms,stats.emittedSegments,segments.size());
+    }
+    if(segments.empty())return;
     auto* level=ctx.mClientInstance.getLevelRenderer();
     if(!level||!level->mLevelRendererPlayer)return;
     auto const& material=level->mLevelRendererPlayer->mOutlineSelectionMaterial.get();
