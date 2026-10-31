@@ -451,6 +451,27 @@ void registerStates(Session& s,Clock::time_point started) {
             case BlockShape::RedDust:
             case BlockShape::Tripwire:
                 entry.geometryContext="neighbor_signals";break;
+            case BlockShape::CrossTexture:
+            case BlockShape::DoublesidedCrossTexture:
+            case BlockShape::DoublesidedWideCrossTexture:
+            case BlockShape::Rows:
+            case BlockShape::DoublesidedRows:
+            case BlockShape::DoublePlant:
+            case BlockShape::DoublesidedDoublePlant:
+            case BlockShape::Stem:
+            case BlockShape::Seagrass:
+            case BlockShape::Kelp:
+            case BlockShape::SweetBerryBush:
+            case BlockShape::PitcherCrop:
+            case BlockShape::PitcherPlant:
+            case BlockShape::FlowerBed:
+            case BlockShape::CaveVine:
+            case BlockShape::Eyeblossom:
+            case BlockShape::FireflyBush:
+                // Exact growth state is still preserved in NBT; additional
+                // per-position visual displacement must not be silently
+                // collapsed into one supposedly complete static model.
+                entry.geometryContext="plant_state_or_position";break;
             default:
                 if(entry.dynamic)entry.geometryContext="neighbor_dependent";break;
             }
