@@ -20,6 +20,10 @@ struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell.
     std::array<bool,6> hooksInstalled{};
     std::size_t capturedModels{};
+    bool sourceAddBoxHook{};
+    bool sourceLoadBoxesHook{};
+    std::size_t retainedSourceParts{};
+    std::size_t retainedSourceBoxes{};
     std::vector<std::string> observedWithoutGeometry;
 };
 ActorCaptureDiagnostics actorCaptureDiagnostics();

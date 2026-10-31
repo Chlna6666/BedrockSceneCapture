@@ -563,6 +563,14 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
                                 installedBed,installedShulker,installedBell};
     std::lock_guard lock(mutex);
     diagnostics.capturedModels=recordedActorLabels.size();
+    diagnostics.sourceAddBoxHook=installedPartAdd;
+    diagnostics.sourceLoadBoxesHook=installedPartLoad;
+    {
+        std::lock_guard sourceLock(sourceBoxesMutex);
+        diagnostics.retainedSourceParts=sourceBoxes.size();
+        for(auto const& [part,boxes]:sourceBoxes)
+            diagnostics.retainedSourceBoxes+=boxes.boxes.size();
+    }
     for(auto const& [label,lastAttempt]:actorLastAttempt){
         if(!recordedActorLabels.contains(label))
             diagnostics.observedWithoutGeometry.push_back(label);
