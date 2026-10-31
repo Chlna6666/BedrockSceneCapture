@@ -489,7 +489,8 @@ void render(BaseActorRenderContext& ctx){
                 "projection_diag=({:.3f},{:.3f},{:.3f}) "
                 "eye_camera=({:.2f},{:.2f},{:.2f}) "
                 "eye_origin=({:.2f},{:.2f},{:.2f}) "
-                "view_subtracts_camera={} cached_chunks={} camera_struct=({:.2f},{:.2f},{:.2f})",
+                "view_subtracts_camera={} cached_chunks={} camera_struct=({:.2f},{:.2f},{:.2f}) "
+                "player_eye=({:.2f},{:.2f},{:.2f}) camera_delta_from_eye=({:.2f},{:.2f},{:.2f})",
                 camera.x,camera.y,camera.z,playerPos.x,playerPos.y,playerPos.z,
                 view[3][0],view[3][1],view[3][2],
                 world[3][0],world[3][1],world[3][2],
@@ -499,7 +500,13 @@ void render(BaseActorRenderContext& ctx){
                 viewAlreadySubtractsCamera,gChunks.size(),
                 ctx.mScreenContext.camera.mPosition.get().x,
                 ctx.mScreenContext.camera.mPosition.get().y,
-                ctx.mScreenContext.camera.mPosition.get().z);
+                ctx.mScreenContext.camera.mPosition.get().z,
+                player?player->getEyePos().x:0.f,
+                player?player->getEyePos().y:0.f,
+                player?player->getEyePos().z:0.f,
+                player?camera.x-player->getEyePos().x:0.f,
+                player?camera.y-player->getEyePos().y:0.f,
+                player?camera.z-player->getEyePos().z:0.f);
         }
         for(auto& [key,chunk]:gChunks){
             if(!chunk.ready || !chunk.gpu || !chunk.gpu->isValid() ||
