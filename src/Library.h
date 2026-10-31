@@ -45,6 +45,10 @@ struct BlockResource {
     std::string name;
     std::string stateNbtHex;
     std::uint32_t networkId{};
+    // A full BlockState is preserved, but audio-only properties may reference
+    // an earlier canonical visual recipe instead of duplicating its mesh.
+    std::uint32_t geometryAliasNetworkId{};
+    bool hasGeometryAlias{};
     std::uint16_t legacyData{};
     std::array<float, 4> atlasUv{};
     bool dynamic{};

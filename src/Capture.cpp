@@ -116,6 +116,11 @@ struct Session {
     std::vector<BlockType const*> registrationTypes;
     std::size_t typeCursor{},permutationCursor{};
     std::unordered_map<std::uint32_t,std::size_t> idToIndex;
+    // Strict, opt-in visual equivalence: note pitch/instrument/trigger state
+    // changes audio behavior but does not change the block's geometry.
+    using NoteModelKey=std::tuple<std::string,int,int,std::array<float,6>,std::vector<std::string>>;
+    std::map<NoteModelKey,std::uint32_t> noteCanonicalModels;
+    std::uint32_t audioOnlyStatesAliased{};
     bool monitoringReported{};
     bool saveRequested{};
     std::map<std::tuple<int,std::array<float,6>,std::uint32_t>,std::shared_ptr<Mesh const>> registryBoxCache;
@@ -414,11 +419,41 @@ void registerStates(Session& s,Clock::time_point started) {
                 ++s.library.sampledBlocks;
             }
         }
+        // Store every registered state for accurate NBT/network-ID lookups,
+        // but only store one geometry recipe for sound-only note-block states.
+        // Never alias stairs, walls, fluids or any neighbor-dependent mesh:
+        // their geometry may depend on properties not present in this key.
+        bool const audioOnlyNoteBlock=
+            entry.name=="minecraft:noteblock" || entry.name=="minecraft:note_block" ||
+            entry.name=="noteblock" || entry.name=="note_block";
+        if(audioOnlyNoteBlock && entry.visualBoundsAvailable &&
+           !entry.blockEntity && entry.geometryContext=="none" &&
+           entry.samples.size()==1 &&
+           entry.samples.front().neighborhood=="registry_visual_bounds"){
+            std::vector<std::string> faceTextures;
+            faceTextures.reserve(entry.textureBindings().size());
+            for(auto const& item:entry.textureBindings())
+                faceTextures.emplace_back(item.defaultName);
+            auto const key=std::make_tuple(
+                entry.name,entry.nativeShape,entry.renderLayer,
+                entry.visualBounds,std::move(faceTextures));
+            auto const [it,inserted]=s.noteCanonicalModels.try_emplace(key,entry.networkId);
+            if(!inserted){
+                entry.geometryAliasNetworkId=it->second;
+                entry.hasGeometryAlias=true;
+                entry.samples.clear();
+                --s.library.sampledBlocks;
+                ++s.audioOnlyStatesAliased;
+            }
+        }
         auto const index=s.library.blocks.size();
         s.idToIndex.emplace(entry.networkId,index);
         s.library.blocks.emplace_back(std::move(entry));
     }
     s.library.registered=static_cast<std::uint32_t>(s.library.blocks.size());
+    // Summarize once after all registry states have been enumerated.
+    if(s.typeCursor>=s.registrationTypes.size() && s.audioOnlyStatesAliased && !s.monitoringReported)
+        log().info("F8: {} audio-only note states share canonical visual meshes",s.audioOnlyStatesAliased);
 }
 void registerNativeGeometry(Session& s,Clock::time_point start) {
     while(s.geometryCursor<s.geometryModels.size() &&

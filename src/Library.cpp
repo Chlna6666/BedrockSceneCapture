@@ -319,9 +319,11 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 reason="neighbor-dependent geometry; samples do not constitute a complete offline rule";
             } else {
                 stateStatus="partial";
-                reason=block.samples.empty()
-                    ? "non-box native shape requires geometry rules or engine tessellation"
-                    : "native visual bounds triangulated; scene-specific tessellation not verified";
+                reason=block.hasGeometryAlias
+                    ? "audio-only state refers to canonical visual geometry"
+                    : (block.samples.empty()
+                        ? "non-box native shape requires geometry rules or engine tessellation"
+                        : "native visual bounds triangulated; scene-specific tessellation not verified");
             }
             ++statuses[stateStatus];
             if (!firstBlock) blocks << ',';
@@ -329,7 +331,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             blocks << "{\"name\":" << quoted(block.name)
                    << ",\"state_nbt_hex\":" << quoted(block.stateNbtHex)
                    << ",\"network_id\":" << block.networkId
-                   << ",\"legacy_data\":" << block.legacyData
+                   << ",\"geometry_alias_network_id\":";
+            if(block.hasGeometryAlias)blocks << block.geometryAliasNetworkId;
+            else blocks << "null";
+            blocks << ",\"legacy_data\":" << block.legacyData
                    << ",\"status\":" << quoted(stateStatus)
                    << ",\"native_render_layer\":" << block.renderLayer
                    << ",\"block_actor_type\":" << block.blockActorType
