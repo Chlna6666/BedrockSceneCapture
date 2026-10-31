@@ -4,6 +4,7 @@
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <cmath>
 #include <iomanip>
 #include <fstream>
@@ -60,6 +61,11 @@ std::string sha256(std::string const& content) {
     }
     return result;
 }
+// Immutable SHA-256 addressed pool entries can be reused between exports.
+// Verify bytes rather than trusting the file name alone, so a partial or
+// manually corrupted cache file is repaired on the next export.
+bool contentAddressedFile(std::filesystem::path const& path,
+                          std::string const& data);
 void atomicFile(std::filesystem::path const& path, std::string const& data) {
     auto tmp = path;
     tmp += ".tmp";
@@ -85,6 +91,33 @@ void atomicFile(std::filesystem::path const& path, std::string const& data) {
         std::filesystem::remove(tmp, ignored);
         throw;
     }
+}
+
+bool contentAddressedFile(std::filesystem::path const& path,
+                          std::string const& data){
+    std::error_code ec;
+    if(std::filesystem::is_regular_file(path,ec) && !ec &&
+       std::filesystem::file_size(path,ec)==data.size() && !ec){
+        std::ifstream stream(path,std::ios::binary);
+        if(stream){
+            std::array<char,16384> buffer{};
+            std::size_t offset=0;
+            bool equal=true;
+            while(offset<data.size()){
+                std::size_t n=std::min(buffer.size(),data.size()-offset);
+                stream.read(buffer.data(),static_cast<std::streamsize>(n));
+                if(stream.gcount()!=static_cast<std::streamsize>(n)||
+                   std::memcmp(buffer.data(),data.data()+offset,n)!=0){
+                    equal=false;
+                    break;
+                }
+                offset+=n;
+            }
+            if(equal && offset==data.size())return false;
+        }
+    }
+    atomicFile(path,data);
+    return true;
 }
 std::vector<std::uint32_t> triangulate(Mesh const& mesh) {
     std::vector<std::uint32_t> source=mesh.indices;
@@ -348,7 +381,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             try{
                 auto hash=sha256(model.geometryJson);
                 if(!staticModelHashes.contains(hash)){
-                    atomicFile(data.directory/"geometry_pool"/"models"/(hash+".json"),model.geometryJson);
+                    (void)contentAddressedFile(data.directory/"geometry_pool"/"models"/(hash+".json"),model.geometryJson);
                     staticModelHashes.insert(hash);
                 }
                 staticModelIndex.emplace(model.name,hash);
@@ -479,7 +512,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                                       +cached->second+"}\n";
                     auto hash=sha256(content);
                     if(uniqueMaterials.insert(hash).second)
-                        atomicFile(data.directory/"geometry_pool"/"materials"/(hash+".json"),content);
+                        (void)contentAddressedFile(data.directory/"geometry_pool"/"materials"/(hash+".json"),content);
                     materialIt=materialTableRefs.emplace(key,std::move(hash)).first;
                 }
                 blocks << quoted(materialIt->second);
@@ -528,7 +561,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                         if(geoRef==canonicalGeometryRefs.end()){
                             std::string geoHash=sha256(encoded->second.geometryJson);
                             if(uniqueExactGeometries.insert(geoHash).second)
-                                atomicFile(data.directory/"geometry_pool"/"geometry"/(geoHash+".json"),
+                                (void)contentAddressedFile(data.directory/"geometry_pool"/"geometry"/(geoHash+".json"),
                                            encoded->second.geometryJson);
                             geoRef=canonicalGeometryRefs.emplace(&mesh,std::move(geoHash)).first;
                         }
@@ -538,7 +571,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                                 bindings.slots,bindings.variants);
                             auto appHash=sha256(appearance);
                             if(uniqueAppearances.insert(appHash).second)
-                                atomicFile(data.directory/"geometry_pool"/"appearance"/(appHash+".json"),
+                                (void)contentAddressedFile(data.directory/"geometry_pool"/"appearance"/(appHash+".json"),
                                            appearance);
                             appRef=canonicalAppearanceRefs.emplace(bindingKey,std::move(appHash)).first;
                         }
@@ -687,7 +720,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         for(auto const& actor:data.actorModels){
             try{
                 auto hash=sha256(actor.geometryJson);
-                atomicFile(data.directory/"geometry_pool"/"models"/(hash+".json"),actor.geometryJson);
+                (void)contentAddressedFile(data.directory/"geometry_pool"/"models"/(hash+".json"),actor.geometryJson);
                 if(!firstActor)entities<<',';
                 firstActor=false;
                 entities << "{\"name\":"<<quoted(actor.name)<<",\"model_ref\":"<<quoted(hash)<<'}';
