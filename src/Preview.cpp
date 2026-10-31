@@ -67,6 +67,10 @@ constexpr unsigned RebuildFrames=3600;
 bool gOverlayInstalled{};
 constexpr std::size_t MaxCaptureSections=384;
 constexpr std::size_t MaxCaptureSegments=250000;
+// Reserve capacity for BlockEntity previews. The ordinary world tessellator
+// can otherwise fill all F8 sections/segments before a renderer is observed.
+constexpr std::size_t MaxBlockCaptureSections=MaxCaptureSections-48;
+constexpr std::size_t MaxBlockCaptureSegments=MaxCaptureSegments-40000;
 constexpr std::size_t MaxCaptureSectionSegments=12000;
 
 struct ChunkWire {
@@ -714,11 +718,11 @@ void setCapturePreviewEnabled(bool enabled){
 void addCapturePreview(BlockPos const& pos,Mesh const& mesh){
     if(!gCapturePreviewEnabled.load(std::memory_order_acquire)||mesh.vertices.empty())return;
     std::unique_lock lock(gCaptureMutex,std::try_to_lock);
-    if(!lock.owns_lock() || gCaptureSegments>=MaxCaptureSegments)return;
+    if(!lock.owns_lock() || gCaptureSegments>=MaxBlockCaptureSegments)return;
     CaptureKey const key{floorChunk(pos.x),floorChunk(pos.y),floorChunk(pos.z)};
     auto it=gCaptureSections.find(key);
     if(it==gCaptureSections.end()){
-        if(gCaptureSections.size()>=MaxCaptureSections)return;
+        if(gCaptureSections.size()>=MaxBlockCaptureSections)return;
         auto [added,inserted]=gCaptureSections.try_emplace(key);
         it=added;
         it->second.x=std::get<0>(key);
@@ -732,7 +736,7 @@ void addCapturePreview(BlockPos const& pos,Mesh const& mesh){
     consume(section,mesh,pos,false);
     section.lines.resize(std::min(section.lines.size(),
                           before+std::min(MaxCaptureSectionSegments-before,
-                            MaxCaptureSegments-gCaptureSegments)));
+                            MaxBlockCaptureSegments-gCaptureSegments)));
     gCaptureSegments+=section.lines.size()-before;
     if(section.lines.size()!=before){section.gpu.reset();section.ready=true;}
 }
