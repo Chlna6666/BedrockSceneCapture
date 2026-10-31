@@ -34,7 +34,6 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
-#include <unordered_map>
 
 namespace bsc {
 namespace {
@@ -48,7 +47,6 @@ struct ActorContext{
 };
 thread_local std::vector<ActorContext> contexts;
 thread_local std::vector<ActorWireSegment> lines;
-thread_local std::unordered_map<BlockActorRenderData const*,std::unique_ptr<ActorWireframeScope>> liveActorScopes;
 // BlockActor renderers can run on more than one thread. Do not assume that
 // the overlay's thread_local line buffer is the same as the renderer's.
 std::mutex pendingMutex;
@@ -56,7 +54,6 @@ std::vector<ActorWireSegment> pendingSegments;
 std::atomic<float> activeCameraX{},activeCameraY{},activeCameraZ{};
 std::atomic_bool activeCameraValid{false};
 std::atomic<std::uint64_t> actorDataConstructed{},actorDataDestroyed{},actorBuffersFlushed{};
-bool dataHooksInstalled{};
 void flushActorSegments(){
     if(lines.empty())return;
     {
@@ -302,12 +299,14 @@ ActorWireframeScope::ActorWireframeScope(BlockPos const& position,
     actor.valid=finite(actor.world)&&finite(actor.relative)&&finite(actor.camera);
     if(!actor.valid)return;
     contexts.push_back(actor);
+    actorDataConstructed.fetch_add(1,std::memory_order_relaxed);
     active_=true;
 }
 ActorWireframeScope::~ActorWireframeScope(){
     if(active_ && !contexts.empty()){
         auto const world=contexts.back().world;
         contexts.pop_back();
+        actorDataDestroyed.fetch_add(1,std::memory_order_relaxed);
         if(contexts.empty()){
             if(gCapturePreviewEnabled.load(std::memory_order_acquire)&&!lines.empty()){
                 BlockPos const pos{static_cast<int>(world.x),
@@ -332,51 +331,6 @@ void updateActorWireframeCamera(Vec3 const& camera){
 // vanilla's dispatcher. Unlike an explicit list of renderer hooks, this
 // includes every BlockEntity family that uses BlockActorRenderData.
 // Keep the hook scoped; do not store raw BlockActorRenderData pointers.
-LL_TYPE_INSTANCE_HOOK(BSCActorDataCtorWireHook,ll::memory::HookPriority::Normal,
-    BlockActorRenderData,&BlockActorRenderData::$ctor,void*,
-    BlockSource& source,IVanillaRenderBlockActorComponent& entity,
-    Block const& block,Vec3 const& renderPos,BlockPos const& worldPos,
-    mce::MaterialPtr const& forcedMat,mce::ClientTexture forcedTex,
-    int breakingAmount,dragon::RenderMetadata metadata){
-    auto* result=origin(source,entity,block,renderPos,worldPos,
-                        forcedMat,std::move(forcedTex),breakingAmount,
-                        std::move(metadata));
-    if((gPreviewEnabled.load(std::memory_order_relaxed)||
-        gCapturePreviewEnabled.load(std::memory_order_relaxed))&&
-       activeCameraValid.load(std::memory_order_acquire)){
-        Vec3 camera{
-            activeCameraX.load(std::memory_order_relaxed),
-            activeCameraY.load(std::memory_order_relaxed),
-            activeCameraZ.load(std::memory_order_relaxed)
-        };
-        liveActorScopes.insert_or_assign(this,
-            std::make_unique<ActorWireframeScope>(worldPos,renderPos,camera));
-        actorDataConstructed.fetch_add(1,std::memory_order_relaxed);
-    }
-    return result;
-}
-LL_TYPE_INSTANCE_HOOK(BSCActorDataDtorWireHook,ll::memory::HookPriority::Normal,
-    BlockActorRenderData,&BlockActorRenderData::$dtor,void){
-    auto const erased=liveActorScopes.erase(this);
-    if(erased)actorDataDestroyed.fetch_add(1,std::memory_order_relaxed);
-    origin();
-}
-bool installUniversalActorDataHook(ll::mod::NativeMod& mod){
-    if(dataHooksInstalled)return true;
-    mod.getLogger().info("BlockEntity universal data hook BEGIN: BlockActorRenderData ctor/dtor");
-    if(BSCActorDataCtorWireHook::hook()!=0){
-        mod.getLogger().warn("BlockEntity universal data constructor hook failed");
-        return false;
-    }
-    if(BSCActorDataDtorWireHook::hook()!=0){
-        BSCActorDataCtorWireHook::unhook();
-        mod.getLogger().warn("BlockEntity universal data destructor hook failed");
-        return false;
-    }
-    dataHooksInstalled=true;
-    mod.getLogger().info("BlockEntity universal data hook OK");
-    return true;
-}
 bool installActorWireframePartHook(ll::mod::NativeMod& mod){
     if(installed && installedAtPosition)return true;
     if(!installed){
@@ -398,12 +352,6 @@ void uninstallActorWireframePartHook(){
         BSCActorPartAtPositionWireHook::unhook();
         installedAtPosition=false;
     }
-    if(dataHooksInstalled){
-        BSCActorDataDtorWireHook::unhook();
-        BSCActorDataCtorWireHook::unhook();
-        dataHooksInstalled=false;
-    }
-    liveActorScopes.clear();
     lines.clear();
     contexts.clear();
     {

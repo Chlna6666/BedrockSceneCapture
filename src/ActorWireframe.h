@@ -31,7 +31,6 @@ struct ActorWireframeStats {
     std::uint64_t actorDataConstructed{},actorDataDestroyed{},actorBuffersFlushed{};
 };
 bool installActorWireframePartHook(ll::mod::NativeMod&);
-bool installUniversalActorDataHook(ll::mod::NativeMod&);
 void updateActorWireframeCamera(Vec3 const&);
 // The dispatcher includes renderers beyond the seven built-in F8 model hooks.
 void uninstallActorWireframePartHook();

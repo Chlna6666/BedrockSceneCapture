@@ -330,6 +330,12 @@ void registerStates(Session& s,Clock::time_point started) {
         case BlockActorType::Conduit:
         case BlockActorType::Bell:
         case BlockActorType::DecoratedPot:
+        case BlockActorType::EnchantingTable:
+        case BlockActorType::Lectern:
+        case BlockActorType::Beacon:
+        case BlockActorType::Cauldron:
+        case BlockActorType::BrewingStand:
+        case BlockActorType::CopperGolemStatue:
         case BlockActorType::ItemFrame:
         case BlockActorType::GlowItemFrame:
             entry.blockEntity=true;
@@ -357,6 +363,21 @@ void registerStates(Session& s,Clock::time_point started) {
             entry.actorModelKeys={"bell"};break;
         case BlockActorType::PistonArm:
             entry.actorModelKeys={"piston_arm"};break;
+        case BlockActorType::EnchantingTable:
+            entry.geometryContext="animated_book";entry.dynamic=true;break;
+        case BlockActorType::Lectern:
+            entry.geometryContext="lectern_book";entry.dynamic=true;break;
+        case BlockActorType::Beacon:
+            entry.geometryContext="beacon_beam";entry.dynamic=true;break;
+        case BlockActorType::Cauldron:
+            entry.geometryContext="cauldron_liquid_level_and_color";
+            entry.dynamic=true;break;
+        case BlockActorType::BrewingStand:
+            entry.geometryContext="brewing_contents";
+            entry.dynamic=true;break;
+        case BlockActorType::CopperGolemStatue:
+            entry.geometryContext="serialized_actor_pose";
+            entry.dynamic=true;break;
         default:break;
         }
         if(auto const* gfx=BlockGraphics::getForBlock(*block)){

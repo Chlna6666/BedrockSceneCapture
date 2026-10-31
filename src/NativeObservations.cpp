@@ -29,6 +29,8 @@
 #include "mc/client/renderer/blockactor/DecoratedPotRenderer.h"
 #include "mc/client/renderer/blockactor/ConduitRenderer.h"
 #include "mc/client/renderer/blockactor/LecternRenderer.h"
+#include "mc/client/renderer/blockactor/EnchantingTableRenderer.h"
+#include "mc/client/renderer/blockactor/BeaconRenderer.h"
 #include <atomic>
 #include <array>
 #include <algorithm>
@@ -741,10 +743,23 @@ LL_TYPE_INSTANCE_HOOK(BSCLecternWireHook,ll::memory::HookPriority::Normal,
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
 }
+LL_TYPE_INSTANCE_HOOK(BSCEnchantingBookWireHook,ll::memory::HookPriority::Normal,
+    EnchantingTableRenderer,&EnchantingTableRenderer::$render,void,
+    BaseActorRenderContext& ctx,BlockActorRenderData& data){
+    ActorWireframeScope scope{ctx,data};
+    origin(ctx,data);
+}
+LL_TYPE_INSTANCE_HOOK(BSCBeaconWireHook,ll::memory::HookPriority::Normal,
+    BeaconRenderer,&BeaconRenderer::$render,void,
+    BaseActorRenderContext& ctx,BlockActorRenderData& data){
+    ActorWireframeScope scope{ctx,data};
+    origin(ctx,data);
+}
 bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
 bool installedWorld{},installedChest{},installedSign{},installedHanging{},
      installedBed{},installedShulker{},installedBell{},installedPiston{},
-     installedBanner{},installedPot{},installedConduit{},installedLectern{};
+     installedBanner{},installedPot{},installedConduit{},installedLectern{},
+     installedEnchanting{},installedBeacon{};
 }
 void installActorRenderHooks(ll::mod::NativeMod& mod){
     auto& logger=mod.getLogger();
@@ -777,22 +792,18 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
         []{return BSCConduitWireHook::hook();});
     install("LecternRenderer::render",installedLectern,
         []{return BSCLecternWireHook::hook();});
+    install("EnchantingTableRenderer::render",installedEnchanting,
+        []{return BSCEnchantingBookWireHook::hook();});
+    install("BeaconRenderer::render",installedBeacon,
+        []{return BSCBeaconWireHook::hook();});
 }
 bool installActorWireframeObservations(ll::mod::NativeMod& mod){
-    // First use the common BlockActorRenderData constructor/destructor pair.
-    // Renderer-specific thunks remain a fallback for runtime builds where
-    // the data constructor is inlined, bypassed or cannot be patched.
-    bool const universal=installUniversalActorDataHook(mod);
-    // A hook may install successfully yet not execute if the engine uses a
-    // different/inlined constructor path. Keep the renderer-specific scopes
-    // as a runtime fallback for all supported families, without double
-    // collecting geometry (nested scopes flush once at the outer boundary).
+    // The old BlockActorRenderData constructor hook executed millions of
+    // times while its destructor hook never fired on 26.51.9. This leaked
+    // nested context scopes indefinitely. Only use tightly paired RAII
+    // renderer hooks; do not hook native constructor/destructor lifetimes.
     installActorRenderHooks(mod);
-    bool const parts=installActorWireframePartHook(mod);
-    return parts && (universal || installedChest || installedSign ||
-                     installedHanging || installedBed || installedShulker ||
-                     installedBell || installedPiston || installedBanner ||
-                     installedPot || installedConduit || installedLectern);
+    return installActorWireframePartHook(mod);
 }
 bool installNativeObservations(ll::mod::NativeMod& mod){
     if(installedWorld)return true;
@@ -809,8 +820,6 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
     // F8 red preview and F7 amber preview consume the same live CPU geometry.
     // Hooking only renderer-specific model collectors could never produce a
     // complete F8 red BlockEntity preview.
-    if(!installUniversalActorDataHook(mod))
-        logger.warn("F8 universal BlockEntity render data hook unavailable");
     installActorWireframePartHook(mod);
     installActorRenderHooks(mod);
     install("ModelPart::addBox",installedPartAdd,
@@ -972,6 +981,8 @@ void uninstallNativeObservations(){
     if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}
     if(installedPartAdd){BSCPartAddBoxHook::unhook();installedPartAdd=false;}
     {std::lock_guard lock(sourceBoxesMutex);sourceBoxes.clear();}
+    if(installedEnchanting){BSCEnchantingBookWireHook::unhook();installedEnchanting=false;}
+    if(installedBeacon){BSCBeaconWireHook::unhook();installedBeacon=false;}
     if(installedLectern){BSCLecternWireHook::unhook();installedLectern=false;}
     if(installedConduit){BSCConduitWireHook::unhook();installedConduit=false;}
     if(installedPot){BSCPotWireHook::unhook();installedPot=false;}
