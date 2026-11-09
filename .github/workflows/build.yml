@@ -40,9 +40,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
-      - uses: ZhongRuoyu/setup-llvm@v0
-        with:
-          llvm-version: 22
+      - name: Use preinstalled clang-cl without GitHub LLVM download
+        shell: pwsh
+        run: |
+          $bin = 'C:\Program Files\LLVM\bin'
+          if (!(Test-Path (Join-Path $bin 'clang-cl.exe'))) { throw 'Hosted runner is missing clang-cl' }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & (Join-Path $bin 'clang-cl.exe') --version
       - name: Restore xmake dependency cache
         id: xmake-cache
         uses: actions/cache/restore@v4

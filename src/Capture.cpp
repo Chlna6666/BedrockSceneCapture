@@ -254,8 +254,8 @@ void finish(bool cancelled) {
         sceneStatus.distinctBlockStates,sceneStatus.distinctShapes
     };
     auto actorStatus=actorCaptureDiagnostics();
-    log().info("F6 BlockActor hooks: chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
-               actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
+    log().info("F6 BlockActor hooks: dispatcher={}, chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
+               actorStatus.dispatcherHook,actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
                actorStatus.hooksInstalled[2],actorStatus.hooksInstalled[3],
                actorStatus.hooksInstalled[4],actorStatus.hooksInstalled[5],
                actorStatus.hooksInstalled[6],

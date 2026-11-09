@@ -10,6 +10,9 @@
 #include "mc/client/renderer/block/BlockGraphics.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/BlockPos.h"
+#include "mc/world/level/block/actor/component/IVanillaRenderBlockActorComponent.h"
+#include "mc/world/level/block/actor/BlockActorRendererId.h"
+#include "mc/deps/minecraft_renderer/framebuilder/dragon/RenderMetadata.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockShape.h"
 #include "mc/client/model/models/Model.h"
@@ -21,6 +24,7 @@
 #include "mc/client/model/Geometry.h"
 #include "mc/client/model/geom/ModelPart.h"
 #include "mc/client/model/geom/Cube.h"
+#include "mc/client/renderer/blockactor/BlockActorRenderDispatcher.h"
 #include "mc/client/renderer/blockactor/ChestRenderer.h"
 #include "mc/client/renderer/blockactor/SignRenderer.h"
 #include "mc/client/renderer/blockactor/HangingSignRenderer.h"
@@ -46,6 +50,7 @@
 #include <limits>
 #include <locale>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <type_traits>
 #include <unordered_map>
@@ -370,6 +375,51 @@ void recordActor(char const* label,Model const& model,
         actorModels.emplace(label,std::move(json));
     }
     recordedActorLabels.emplace(label);
+}
+
+void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
+                           IVanillaRenderBlockActorComponent& component){
+    if(!armed.load(std::memory_order_relaxed))return;
+    // RendererId indexes the 28-entry native DenseEnumMap. It is not a
+    // BlockActorType, and is validated before accessing the renderer.
+    auto const id=component.getRendererId();
+    auto const& renderers=dispatcher.mRenderers.get();
+    if(static_cast<std::size_t>(id)>=renderers.size())return;
+    auto const& renderer=renderers[id];
+    if(!renderer)return;
+    switch(id){
+    case BlockActorRendererId::Bed: {
+        auto const& model=static_cast<BedRenderer const*>(renderer.get())->mBed.get();
+        recordActor("bed",model,{&model.mBody.get(),&model.mLeg0.get(),
+            &model.mLeg1.get(),&model.mLeg2.get(),&model.mLeg3.get()});
+        break;
+    }
+    case BlockActorRendererId::ShulkerBox: {
+        auto const& model=static_cast<ShulkerBoxRenderer const*>(renderer.get())->mShulkerBoxModel.get();
+        recordActor("shulker_box",model,{&model.mLid.get(),&model.mBase.get()});
+        break;
+    }
+    case BlockActorRendererId::Bell: {
+        auto const& model=static_cast<BellBlockActorRenderer const*>(renderer.get())->mBell.get();
+        recordActor("bell",model,{&model.mBellBody.get(),&model.mBellBase.get()});
+        break;
+    }
+    case BlockActorRendererId::Enchanter: {
+        auto const& model=static_cast<EnchantingTableRenderer const*>(renderer.get())->mBook.get();
+        auto const& parts=model.mBook.get();
+        recordActor("enchanting_book",model,{&parts[0],&parts[1],&parts[2],
+            &parts[3],&parts[4],&parts[5],&parts[6]});
+        break;
+    }
+    case BlockActorRendererId::Lectern: {
+        auto const& model=static_cast<LecternRenderer const*>(renderer.get())->mBook.get();
+        auto const& parts=model.mBook.get();
+        recordActor("lectern_book",model,{&parts[0],&parts[1],&parts[2],
+            &parts[3],&parts[4],&parts[5],&parts[6]});
+        break;
+    }
+    default:break;
+    }
 }
 
 void reconstructMissingNormals(Mesh& mesh){
@@ -797,31 +847,6 @@ LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
          &model.mChainL1.get(),&model.mChainL2.get(),
          &model.mChainR1.get(),&model.mChainR2.get()});
 }
-LL_TYPE_INSTANCE_HOOK(BSCBedModelHook,ll::memory::HookPriority::Normal,
-    BedRenderer,&BedRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data) {
-    ActorWireframeScope wireScope{ctx,data};
-    origin(ctx,data);
-    auto const& model=this->mBed.get();
-    recordActor("bed",model,{&model.mBody.get(),&model.mLeg0.get(),
-        &model.mLeg1.get(),&model.mLeg2.get(),&model.mLeg3.get()});
-}
-LL_TYPE_INSTANCE_HOOK(BSCShulkerModelHook,ll::memory::HookPriority::Normal,
-    ShulkerBoxRenderer,&ShulkerBoxRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data) {
-    ActorWireframeScope wireScope{ctx,data};
-    origin(ctx,data);
-    auto const& model=this->mShulkerBoxModel.get();
-    recordActor("shulker_box",model,{&model.mLid.get(),&model.mBase.get()});
-}
-LL_TYPE_INSTANCE_HOOK(BSCBellModelHook,ll::memory::HookPriority::Normal,
-    BellBlockActorRenderer,&BellBlockActorRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data) {
-    ActorWireframeScope wireScope{ctx,data};
-    origin(ctx,data);
-    auto const& model=this->mBell.get();
-    recordActor("bell",model,{&model.mBellBody.get(),&model.mBellBase.get()});
-}
 LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
     PistonBlockActorRenderer,&PistonBlockActorRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
@@ -832,41 +857,9 @@ LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
         &model.mArmBase.get(),&model.mArm.get(),&model.mFront.get()
     });
 }
-// F7-only renderer scopes for additional native BlockActor model families.
-// These share the live ModelPart observer; they do not claim export of
-// geometry for which the SDK exposes only opaque GPU buffers.
-LL_TYPE_INSTANCE_HOOK(BSCBannerWireHook,ll::memory::HookPriority::Normal,
-    BannerRenderer,&BannerRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data){
-    ActorWireframeScope scope{ctx,data};
-    origin(ctx,data);
-}
+// Observe the exported dispatcher instead of non-exported MCNAPI renderers.
 LL_TYPE_INSTANCE_HOOK(BSCPotWireHook,ll::memory::HookPriority::Normal,
     DecoratedPotRenderer,&DecoratedPotRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data){
-    ActorWireframeScope scope{ctx,data};
-    origin(ctx,data);
-}
-LL_TYPE_INSTANCE_HOOK(BSCConduitWireHook,ll::memory::HookPriority::Normal,
-    ConduitRenderer,&ConduitRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data){
-    ActorWireframeScope scope{ctx,data};
-    origin(ctx,data);
-}
-LL_TYPE_INSTANCE_HOOK(BSCLecternWireHook,ll::memory::HookPriority::Normal,
-    LecternRenderer,&LecternRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data){
-    ActorWireframeScope scope{ctx,data};
-    origin(ctx,data);
-}
-LL_TYPE_INSTANCE_HOOK(BSCEnchantingBookWireHook,ll::memory::HookPriority::Normal,
-    EnchantingTableRenderer,&EnchantingTableRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data){
-    ActorWireframeScope scope{ctx,data};
-    origin(ctx,data);
-}
-LL_TYPE_INSTANCE_HOOK(BSCBeaconWireHook,ll::memory::HookPriority::Normal,
-    BeaconRenderer,&BeaconRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
@@ -874,17 +867,28 @@ LL_TYPE_INSTANCE_HOOK(BSCBeaconWireHook,ll::memory::HookPriority::Normal,
 // Covers all serialized actor-like BlockEntity models (including copper
 // golem statues) via the shared base renderer, not by assuming their visual
 // model can be recovered from the ordinary BlockTessellator.
-LL_TYPE_INSTANCE_HOOK(BSCSerializedActorWireHook,ll::memory::HookPriority::Normal,
-    SerializedActorRenderer,&SerializedActorRenderer::$render,void,
-    BaseActorRenderContext& ctx,BlockActorRenderData& data){
-    ActorWireframeScope scope{ctx,data};
-    origin(ctx,data);
+
+using ExplicitActorRenderFn=void(BlockActorRenderDispatcher::*)(
+    BaseActorRenderContext&,BlockSource&,IVanillaRenderBlockActorComponent&,
+    Block const&,Vec3 const&,BlockPos const&,bool,mce::MaterialPtr const&,
+    mce::ClientTexture const*,int,std::optional<dragon::RenderMetadata>);
+constexpr ExplicitActorRenderFn kExplicitActorRender=
+    static_cast<ExplicitActorRenderFn>(&BlockActorRenderDispatcher::render);
+LL_TYPE_INSTANCE_HOOK(BSCDispatcherRenderHook,ll::memory::HookPriority::Normal,
+    BlockActorRenderDispatcher,kExplicitActorRender,void,
+    BaseActorRenderContext& ctx,BlockSource& source,
+    IVanillaRenderBlockActorComponent& component,Block const& block,
+    Vec3 const& relative,BlockPos const& world,bool alpha,
+    mce::MaterialPtr const& material,mce::ClientTexture const* texture,
+    int breaking,std::optional<dragon::RenderMetadata> metadata){
+    ActorWireframeScope scope{ctx,world,relative};
+    origin(ctx,source,component,block,relative,world,alpha,material,texture,
+           breaking,metadata);
+    if(!alpha)recordDispatchedActor(*this,component);
 }
 bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
-bool installedWorld{},installedChest{},installedSign{},installedHanging{},
-     installedBed{},installedShulker{},installedBell{},installedPiston{},
-     installedBanner{},installedPot{},installedConduit{},installedLectern{},
-     installedEnchanting{},installedBeacon{},installedSerialized{};
+bool installedWorld{},installedDispatch{},installedChest{},installedSign{},
+     installedHanging{},installedPiston{},installedPot{};
 }
 void installActorRenderHooks(ll::mod::NativeMod& mod){
     auto& logger=mod.getLogger();
@@ -896,34 +900,27 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
         if(installed)logger.info("BlockEntity hook OK: {}",label);
         else logger.warn("BlockEntity hook FAILED: {}, hook_status={}",label,status);
     };
+    install("BlockActorRenderDispatcher::render",installedDispatch,
+        []{return BSCDispatcherRenderHook::hook();});
     install("ChestRenderer::render",installedChest,
         []{return BSCChestModelHook::hook();});
     install("SignRenderer::render",installedSign,
         []{return BSCSignModelHook::hook();});
     install("HangingSignRenderer::render",installedHanging,
         []{return BSCHangingSignModelHook::hook();});
-    install("BedRenderer::render",installedBed,
-        []{return BSCBedModelHook::hook();});
-    install("ShulkerBoxRenderer::render",installedShulker,
-        []{return BSCShulkerModelHook::hook();});
-    install("BellBlockActorRenderer::render",installedBell,
-        []{return BSCBellModelHook::hook();});
+
+
+
     install("PistonBlockActorRenderer::render",installedPiston,
         []{return BSCPistonArmModelHook::hook();});
-    install("BannerRenderer::render",installedBanner,
-        []{return BSCBannerWireHook::hook();});
+
     install("DecoratedPotRenderer::render",installedPot,
         []{return BSCPotWireHook::hook();});
-    install("ConduitRenderer::render",installedConduit,
-        []{return BSCConduitWireHook::hook();});
-    install("LecternRenderer::render",installedLectern,
-        []{return BSCLecternWireHook::hook();});
-    install("EnchantingTableRenderer::render",installedEnchanting,
-        []{return BSCEnchantingBookWireHook::hook();});
-    install("BeaconRenderer::render",installedBeacon,
-        []{return BSCBeaconWireHook::hook();});
-    install("SerializedActorRenderer::render",installedSerialized,
-        []{return BSCSerializedActorWireHook::hook();});
+
+
+
+
+
 }
 bool installActorWireframeObservations(ll::mod::NativeMod& mod){
     // The old BlockActorRenderData constructor hook executed millions of
@@ -931,7 +928,10 @@ bool installActorWireframeObservations(ll::mod::NativeMod& mod){
     // nested context scopes indefinitely. Only use tightly paired RAII
     // renderer hooks; do not hook native constructor/destructor lifetimes.
     installActorRenderHooks(mod);
-    return installActorWireframePartHook(mod);
+    bool const partHook=installActorWireframePartHook(mod);
+    if(!partHook && installedDispatch)
+        mod.getLogger().warn("F7/F6: ModelPart render hooks unavailable; dispatcher capture still active");
+    return installedDispatch || partHook;
 }
 bool installNativeObservations(ll::mod::NativeMod& mod){
     if(installedWorld)return true;
@@ -957,12 +957,11 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         []{return BSCPartLoadBoxesHook::hook();});
     install("ModelPart::compileCubes",installedPartCompile,
         []{return BSCPartCompileCubesHook::hook();});
-    logger.info("F6 native hooks initialized: world={}, actors={}/7, source_box_hooks={}/3",
-        installedWorld,
+    logger.info("F6 native hooks initialized: world={}, dispatcher={}, direct_actor_hooks={}/5, source_box_hooks={}/3",
+        installedWorld,installedDispatch,
         static_cast<int>(installedChest)+static_cast<int>(installedSign)+
-        static_cast<int>(installedHanging)+static_cast<int>(installedBed)+
-        static_cast<int>(installedShulker)+static_cast<int>(installedBell)+
-        static_cast<int>(installedPiston),
+        static_cast<int>(installedHanging)+static_cast<int>(installedPiston)+
+        static_cast<int>(installedPot),
         static_cast<int>(installedPartAdd)+static_cast<int>(installedPartLoad)+
         static_cast<int>(installedPartCompile));
     return installedWorld;
@@ -992,7 +991,8 @@ NativeSceneDiagnostics nativeSceneDiagnostics(){
 ActorCaptureDiagnostics actorCaptureDiagnostics(){
     ActorCaptureDiagnostics diagnostics;
     diagnostics.hooksInstalled={installedChest,installedSign,installedHanging,
-                                installedBed,installedShulker,installedBell,installedPiston};
+                                false,false,false,installedPiston};
+    diagnostics.dispatcherHook=installedDispatch;
     std::lock_guard lock(mutex);
     diagnostics.capturedModels=recordedActorLabels.size();
     diagnostics.sourceAddBoxHook=installedPartAdd;
@@ -1062,17 +1062,9 @@ void uninstallNativeObservations(){
     if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}
     if(installedPartAdd){BSCPartAddBoxHook::unhook();installedPartAdd=false;}
     {std::lock_guard lock(sourceBoxesMutex);sourceBoxes.clear();}
-    if(installedSerialized){BSCSerializedActorWireHook::unhook();installedSerialized=false;}
-    if(installedEnchanting){BSCEnchantingBookWireHook::unhook();installedEnchanting=false;}
-    if(installedBeacon){BSCBeaconWireHook::unhook();installedBeacon=false;}
-    if(installedLectern){BSCLecternWireHook::unhook();installedLectern=false;}
-    if(installedConduit){BSCConduitWireHook::unhook();installedConduit=false;}
     if(installedPot){BSCPotWireHook::unhook();installedPot=false;}
-    if(installedBanner){BSCBannerWireHook::unhook();installedBanner=false;}
+    if(installedDispatch){BSCDispatcherRenderHook::unhook();installedDispatch=false;}
     if(installedPiston){BSCPistonArmModelHook::unhook();installedPiston=false;}
-    if(installedBell){BSCBellModelHook::unhook();installedBell=false;}
-    if(installedShulker){BSCShulkerModelHook::unhook();installedShulker=false;}
-    if(installedBed){BSCBedModelHook::unhook();installedBed=false;}
     if(installedHanging){BSCHangingSignModelHook::unhook();installedHanging=false;}
     if(installedSign){BSCSignModelHook::unhook();installedSign=false;}
     if(installedChest){BSCChestModelHook::unhook();installedChest=false;}

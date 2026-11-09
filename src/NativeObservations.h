@@ -34,6 +34,7 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod);
 struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell, piston arm.
     std::array<bool,7> hooksInstalled{};
+    bool dispatcherHook{};
     std::size_t capturedModels{};
     bool sourceAddBoxHook{};
     bool sourceLoadBoxesHook{};
