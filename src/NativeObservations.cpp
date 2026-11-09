@@ -454,18 +454,29 @@ void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
             "skull_skeleton","skull_wither","skull_zombie",
             "skull_player","skull_creeper","skull_dragon","skull_piglin"};
         auto const& generic=skull->mSkullGeometry.get();
+        auto const& nativeTextures=skull->mSkullTextures;
         for(std::size_t i=0;i<generic.size();++i){
             if((i==5 && skull->mDragonHeadModel.get()) ||
                (i==6 && skull->mPiglinHeadModel.get()))continue;
-            if(auto const& model=generic[i];model)
-                recordActor(names[i],*model,{&model->mHead.get()});
+            if(auto const& model=generic[i];model){
+                NativeTextureResources resources;
+                addActorColor(resources,"skull_type_"+std::to_string(i),
+                              nativeTextures[i].get());
+                recordActor(names[i],*model,{&model->mHead.get()},resources);
+            }
         }
-        if(auto const& dragon=skull->mDragonHeadModel.get();dragon)
+        if(auto const& dragon=skull->mDragonHeadModel.get();dragon){
+            NativeTextureResources resources;
+            addActorColor(resources,"skull_type_5",nativeTextures[5].get());
             recordActor("skull_dragon",*dragon,{&dragon->mHead.get(),
-                &dragon->mJaw.get(),&dragon->mSnout.get()});
-        if(auto const& piglin=skull->mPiglinHeadModel.get();piglin)
+                &dragon->mJaw.get(),&dragon->mSnout.get()},resources);
+        }
+        if(auto const& piglin=skull->mPiglinHeadModel.get();piglin){
+            NativeTextureResources resources;
+            addActorColor(resources,"skull_type_6",nativeTextures[6].get());
             recordActor("skull_piglin",*piglin,{&piglin->mHead.get(),
-                &piglin->mLeftEar.get(),&piglin->mRightEar.get()});
+                &piglin->mLeftEar.get(),&piglin->mRightEar.get()},resources);
+        }
         break;
     }
     case BlockActorRendererId::Banner: {
@@ -516,19 +527,34 @@ void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
         break;
     }
     case BlockActorRendererId::Bed: {
-        auto const& model=static_cast<BedRenderer const*>(renderer.get())->mBed.get();
+        auto const* bed=static_cast<BedRenderer const*>(renderer.get());
+        auto const& model=bed->mBed.get();
+        NativeTextureResources resources;
+        for(std::size_t i=0;i<16;++i)
+            addActorColor(resources,"bed_color_"+std::to_string(i),
+                          bed->mTextures[i].get());
         recordActor("bed",model,{&model.mBody.get(),&model.mLeg0.get(),
-            &model.mLeg1.get(),&model.mLeg2.get(),&model.mLeg3.get()});
+            &model.mLeg1.get(),&model.mLeg2.get(),&model.mLeg3.get()},resources);
         break;
     }
     case BlockActorRendererId::ShulkerBox: {
-        auto const& model=static_cast<ShulkerBoxRenderer const*>(renderer.get())->mShulkerBoxModel.get();
-        recordActor("shulker_box",model,{&model.mLid.get(),&model.mBase.get()});
+        auto const* shulker=static_cast<ShulkerBoxRenderer const*>(renderer.get());
+        auto const& model=shulker->mShulkerBoxModel.get();
+        NativeTextureResources resources;
+        std::size_t variant=0;
+        for(auto const& [key,texture]:shulker->mTextures.get()){
+            (void)key;
+            addActorColor(resources,"shulker_texture_"+std::to_string(variant++),texture);
+        }
+        recordActor("shulker_box",model,{&model.mLid.get(),&model.mBase.get()},resources);
         break;
     }
     case BlockActorRendererId::Bell: {
-        auto const& model=static_cast<BellBlockActorRenderer const*>(renderer.get())->mBell.get();
-        recordActor("bell",model,{&model.mBellBody.get(),&model.mBellBase.get()});
+        auto const* bell=static_cast<BellBlockActorRenderer const*>(renderer.get());
+        auto const& model=bell->mBell.get();
+        NativeTextureResources resources;
+        addActorColor(resources,"bell",bell->mBellTexture.get());
+        recordActor("bell",model,{&model.mBellBody.get(),&model.mBellBase.get()},resources);
         break;
     }
     case BlockActorRendererId::Enchanter: {
