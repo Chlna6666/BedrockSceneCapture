@@ -891,9 +891,10 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
     auto install=[&](char const* label,bool& installed,auto patch){
         if(installed)return;
         logger.info("BlockEntity hook BEGIN: {}",label);
-        installed=(patch()==0);
+        auto const status=patch();
+        installed=(status==0);
         if(installed)logger.info("BlockEntity hook OK: {}",label);
-        else logger.warn("BlockEntity hook FAILED: {}",label);
+        else logger.warn("BlockEntity hook FAILED: {}, hook_status={}",label,status);
     };
     install("ChestRenderer::render",installedChest,
         []{return BSCChestModelHook::hook();});
@@ -938,9 +939,10 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
     auto install=[&](char const* label,bool& installed,auto patch){
         if(installed)return;
         logger.info("F8 native hook install BEGIN: {}",label);
-        installed=(patch()==0);
+        auto const status=patch();
+        installed=(status==0);
         if(installed)logger.info("F8 native hook install OK: {}",label);
-        else logger.warn("F8 native hook install FAILED: {}",label);
+        else logger.warn("F8 native hook install FAILED: {}, hook_status={}",label,status);
     };
     install("BlockTessellator::tessellateInWorld",installedWorld,
         []{return BSCNativeBlockHook::hook();});

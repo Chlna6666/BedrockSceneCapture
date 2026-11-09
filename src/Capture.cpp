@@ -59,7 +59,11 @@ bool graphicsReady(){
     using Accessor=bool& (*)();
     static auto access=reinterpret_cast<Accessor>(
         ll::memory::SymbolView{"?mInitialized@BlockGraphics@@SAAEA_NXZ"}.resolve(true));
-    return access && access();
+    // Bedrock 26.60.x can omit the exported static accessor while its
+    // renderer is already live. The active render pass supplies a stronger,
+    // lifetime-checked signal than a missing export.
+    if(access)return access();
+    return !renderBufferService().expired();
 }
 auto graphicsModels() ->
     std::remove_reference_t<decltype(BlockGraphics::mModels())> const* {
@@ -149,6 +153,9 @@ struct Session {
     std::size_t geometryCursor{};
 };
 std::unique_ptr<Session> gSession;
+// A single F8 press can precede the first renderBlockEntities pass. Once
+// the overlay observes a live GPU resource service, resume automatically.
+bool gPendingWorldStart{};
 bool wasF7{},wasF8{},wasF9{},wasMenuF8{},wasMenuF9{};
 auto& log(){return gMod->getLogger();}
 bool gameFocused(){
@@ -190,11 +197,11 @@ ControlCommand pollControlCommand(){
 }
 void reportControlStatus(std::string_view mode){
     log().info("BSC status: mode={}, game_focused={}, F8_key_down={}, graphics_ready={}, F8_active={}, "
-               "export={}, control={}",
+               "export={}, control={}, pending_world_start={}",
                mode,gameFocused(),(GetAsyncKeyState(VK_F8)&0x8000)!=0,
                graphicsReady(),gSession!=nullptr,
                (gMod->getDataDir()/"export"/TargetGameVersion).string(),
-               (gMod->getDataDir()/"control").string());
+               (gMod->getDataDir()/"control").string(),gPendingWorldStart);
 }
 void collectNativeSamples(Session& s) {
     for(auto& event:takeNativeObservations()){
@@ -274,13 +281,30 @@ void finish(bool cancelled) {
                registered,sampled,staticCount,actorCount,cancelled,directory.string());
 }
 void begin(LocalPlayer* player) {
+    // The initialization accessor is not exported by all Bedrock client
+    // builds. Do not mistake a missing symbol for uninitialized graphics.
+    // Observe a real render pass before accessing BlockGraphics or the atlas.
+    if(player && !graphicsReady()){
+        if(!installPreview(*gMod)){
+            gPendingWorldStart=false;
+            log().warn("F8: graphics readiness unavailable; render hook installation failed");
+            return;
+        }
+        if(!graphicsReady()){
+            if(!gPendingWorldStart)
+                log().info("F8: waiting for first in-world render pass; capture will start automatically");
+            gPendingWorldStart=true;
+            return;
+        }
+    }
+    gPendingWorldStart=false;
+    if(!graphicsReady()){
+        log().warn("F8: graphics resources not yet confirmed; enter a world to export native geometry");
+        return;
+    }
     if(gSession) finish(true);
     clearNativeObservations();
     setCapturePreviewEnabled(false);
-    if(!graphicsReady()){
-        log().warn("F8: client graphics resources are not initialized");
-        return;
-    }
     if(player){
         log().info("F8: installing red native-scene overlay on demand");
         if(!installPreview(*gMod))
@@ -675,6 +699,7 @@ bool installMenuCapture(){return BSCMenuHook::hook()==0;}
 void uninstallMenuCapture(){BSCMenuHook::unhook();}
 void uninstallCapture(){
     BSCTickHook::unhook();
+    gPendingWorldStart=false;
     if(gSession)finish(true);
     gWriter.shutdown();
 }
@@ -715,6 +740,10 @@ void onTick(LocalPlayer& player) {
     try{
         if(command==ControlCommand::Status)reportControlStatus("world");
         if(cancel){
+            if(gPendingWorldStart){
+                gPendingWorldStart=false;
+                log().info("F8: pending capture cancelled");
+            }
             if(gSession)finish(true);
             else log().info("BSC cancel requested, no active F8 capture");
             return;
@@ -738,6 +767,10 @@ void onTick(LocalPlayer& player) {
             }
             return;
         }
+        if(gPendingWorldStart && graphicsReady()){
+            log().info("F8: live renderer resources observed; starting deferred capture");
+            begin(&player);
+        }
         if(!gSession)return;
         if(gSession->player!=&player){finish(true);return;}
         advance(*gSession);
@@ -758,6 +791,10 @@ void onMenuUpdate(MinecraftGame& game){
     }
     if(gSession && gSession->player)
         finish(true); // World closed.
+    if(gPendingWorldStart){
+        gPendingWorldStart=false;
+        log().info("F8: pending in-world capture cancelled (world closed)");
+    }
     auto const command=pollControlCommand();
     bool focus=gameFocused();
     bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);

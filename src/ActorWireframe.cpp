@@ -335,14 +335,17 @@ bool installActorWireframePartHook(ll::mod::NativeMod& mod){
     if(installed && installedAtPosition)return true;
     if(!installed){
         mod.getLogger().info("F7/F8 BlockEntity ModelPart::render hook BEGIN");
-        installed=(BSCActorPartWireHook::hook()==0);
-        mod.getLogger().info("F7/F8 BlockEntity ModelPart::render hook {}",installed?"OK":"FAILED");
+        auto const status=BSCActorPartWireHook::hook();
+        installed=(status==0);
+        if(installed)mod.getLogger().info("F7/F8 BlockEntity ModelPart::render hook OK");
+        else mod.getLogger().warn("F7/F8 BlockEntity ModelPart::render hook FAILED, hook_status={}",status);
     }
     if(!installedAtPosition){
         mod.getLogger().info("F7/F8 BlockEntity ModelPart::renderAtPosition hook BEGIN");
-        installedAtPosition=(BSCActorPartAtPositionWireHook::hook()==0);
-        mod.getLogger().info("F7/F8 BlockEntity ModelPart::renderAtPosition hook {}",
-                             installedAtPosition?"OK":"FAILED");
+        auto const status=BSCActorPartAtPositionWireHook::hook();
+        installedAtPosition=(status==0);
+        if(installedAtPosition)mod.getLogger().info("F7/F8 BlockEntity ModelPart::renderAtPosition hook OK");
+        else mod.getLogger().warn("F7/F8 BlockEntity ModelPart::renderAtPosition hook FAILED, hook_status={}",status);
     }
     return installed || installedAtPosition;
 }
