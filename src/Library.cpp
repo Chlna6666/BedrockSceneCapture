@@ -4,6 +4,7 @@
 #include "PoolV3.h"
 #include <Windows.h>
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cstring>
 #include <cmath>
@@ -598,9 +599,13 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << (firstActor?"\"unsupported\"":"\"partial\"")
                  << ",\"reason\":\"Native ModelPart/Cube base geometry only; scene transforms, text and animation are not yet captured\"}\n";
         std::ostringstream manifest;
+        auto const exportRevision=static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
         manifest << "{\"schema\":1,\"format\":\"BedrockSceneCaptureModelLibrary\","
                     "\"target_game_version\":\"" << TargetGameVersion << "\","
                     "\"levilamina_sdk_version\":\"" << TargetLeviLaminaSdkVersion << "\","
+                 << "\"capture_revision\":" << exportRevision << ','
                     "\"resource_pack_fingerprint\":null,"
                     "\"resource_pack_fingerprint_status\":\"not_captured\","
                     "\"textures_exported\":false,"
