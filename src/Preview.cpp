@@ -107,24 +107,22 @@ std::uint64_t gFrame{};
 unsigned gVertexMarks{};
 ll::mod::NativeMod* gPreviewMod{};
 Clock::time_point gLastTransformDiagnostic{};
-mce::TexturePtr gWhiteTexture{};
-bool gWhiteReady{};
+std::optional<mce::TexturePtr> gWhiteTexture;
 
 using TextureVariant=std::variant<std::monostate,mce::TexturePtr,mce::ClientTexture,mce::ServerTexture>;
 TextureVariant white(LevelRenderer& level) {
-    if(!gWhiteReady){
+    if(!gWhiteTexture){
         auto const& group=level.mTextureGroup.get();
         if(group){
             auto tex=group->getTexture(
                 ResourceLocation{Core::PathView{"textures/ui/white_background"}},
                 false,std::nullopt,cg::TextureSetLayerType::Color);
             if(tex.mClientTexture && tex.mClientTexture->mIsMissingTexture!=IsMissingTexture::Yes){
-                gWhiteTexture=std::move(tex);
-                gWhiteReady=true;
+                gWhiteTexture.emplace(std::move(tex));
             }
         }
     }
-    if(gWhiteReady)return TextureVariant{gWhiteTexture};
+    if(gWhiteTexture)return TextureVariant{*gWhiteTexture};
     return {};
 }
 void reset() {
@@ -137,8 +135,9 @@ void reset() {
     gPlayer=nullptr;
     gRegion=nullptr;
     gFrame=0;
-    gWhiteTexture=mce::TexturePtr{};
-    gWhiteReady=false;
+    // The 26.60 SDK no longer exports TexturePtr's default constructor.
+    // Destroy the cached handle without constructing a missing native symbol.
+    gWhiteTexture.reset();
 }
 Vec3 cameraPosition(BaseActorRenderContext const& ctx){
     // Camera::mPosition is (0,0,0) in the BlockEntity render pass on
