@@ -21,15 +21,16 @@ int main(){
     auto const baseline=encodeSharedGeometry(a);
     assert(baseline.canonicalTriangles.size()==2);
     auto const baselineAppearance=encodeSharedAppearance(
-        a,baseline,"canonical-geometry","[2,3]","[null,[0,0]]");
+        a,baseline,0,"[2,3]","[null,[0,0]]");
     // Triangle order and cyclic starting corner do not affect the shared
     // geometry, appearance stream or the original per-face texture binding.
     auto reordered=a;
     reordered.indices={2,3,0,1,2,0};
     auto const reorderedGeometry=encodeSharedGeometry(reordered);
     auto const reorderedAppearance=encodeSharedAppearance(
-        reordered,reorderedGeometry,"canonical-geometry","[3,2]","[[0,0],null]");
-    assert(reorderedGeometry.geometryJson==baseline.geometryJson);
+        reordered,reorderedGeometry,0,"[3,2]","[[0,0],null]");
+    assert(reorderedGeometry.geometryBytes==baseline.geometryBytes);
+    assert(baseline.geometryBytes.size()==8+4*12+2*12);
     assert(reorderedAppearance==baselineAppearance);
 
     // Changing only texture coordinates or material layer MUST NOT create a
@@ -38,20 +39,20 @@ int main(){
     recolored.vertices[0].u=.375f;
     recolored.layer=8;
     auto const recoloredGeometry=encodeSharedGeometry(recolored);
-    assert(recoloredGeometry.geometryJson==baseline.geometryJson);
+    assert(recoloredGeometry.geometryBytes==baseline.geometryBytes);
     assert(encodeSharedAppearance(recolored,recoloredGeometry,
-        "canonical-geometry","[2,3]","[null,[0,0]]")!=baselineAppearance);
+        0,"[2,3]","[null,[0,0]]")!=baselineAppearance);
 
     // A changed triangle winding is not an equivalent mesh.
     auto flipped=a;
     flipped.indices={0,2,1,0,3,2};
-    assert(encodeSharedGeometry(flipped).geometryJson!=baseline.geometryJson);
+    assert(encodeSharedGeometry(flipped).geometryBytes!=baseline.geometryBytes);
 
     // The exact quad tessellation and its explicit triangles are equivalent.
     auto quads=a;
     quads.primitive=1;
     quads.indices={0,1,2,3};
-    assert(encodeSharedGeometry(quads).geometryJson==baseline.geometryJson);
+    assert(encodeSharedGeometry(quads).geometryBytes==baseline.geometryBytes);
 
     // Invalid native index positions and non-finite positions are rejected.
     auto invalid=a;
@@ -69,7 +70,7 @@ int main(){
 
     // An appearance stream must have one binding per original triangle.
     rejected=false;
-    try{(void)encodeSharedAppearance(a,baseline,"canonical-geometry","[2]","[null]");}
+    try{(void)encodeSharedAppearance(a,baseline,0,"[2]","[null]");}
     catch(std::runtime_error const&){rejected=true;}
     assert(rejected);
 }

@@ -1,7 +1,10 @@
 #include "GeometryPool.h"
+#include "PoolV3.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <charconv>
+#include <string_view>
 #include <iomanip>
 #include <limits>
 #include <locale>
@@ -59,8 +62,28 @@ float checked(float f){
     // values. Do not merge triangles by rounding their positions.
     return f==0.f?0.f:f;
 }
-void writePoint(std::ostringstream& out,Point const& p){
-    out<<'['<<p[0]<<','<<p[1]<<','<<p[2]<<']';
+std::uint32_t bindingNumber(std::string_view token){
+    std::uint32_t value=0;
+    auto const result=std::from_chars(token.data(),token.data()+token.size(),value);
+    if(result.ec!=std::errc{}||result.ptr!=token.data()+token.size())
+        throw std::runtime_error("Geometry Pool v3: invalid material/variant index");
+    return value;
+}
+std::uint32_t optionalIndex(std::string_view token){
+    if(token=="null")return UINT32_MAX;
+    return bindingNumber(token);
+}
+std::array<std::uint32_t,2> variantIndex(std::string_view token){
+    if(token=="null")return {UINT32_MAX,UINT32_MAX};
+    if(token.size()<5||token.front()!='['||token.back()!=']')
+        throw std::runtime_error("Geometry Pool v3: invalid variant");
+    token.remove_prefix(1);
+    token.remove_suffix(1);
+    auto const comma=token.find(',');
+    if(comma==std::string_view::npos)
+        throw std::runtime_error("Geometry Pool v3: invalid variant pair");
+    return {optionalIndex(token.substr(0,comma)),
+            optionalIndex(token.substr(comma+1))};
 }
 // A strict parser for the only binding values emitted by faceBindingJson:
 // arrays of integers/null or pairs of integer/null. Nested brackets are
@@ -121,84 +144,54 @@ SharedMeshEncoding encodeSharedGeometry(Mesh const& mesh){
     for(auto& [point,index]:positionIndex)index=next++;
 
     SharedMeshEncoding result;
-    std::ostringstream out;
-    out.imbue(std::locale::classic());
-    out<<std::setprecision(std::numeric_limits<float>::max_digits10);
-    out<<"{\"schema\":2,\"topology\":\"triangles\","
-       "\"coordinate_space\":\"block_local\","
-       "\"precision\":\"exact_float32\","
-       "\"winding_preserved\":true,\"vertices\":[";
-    bool first=true;
+    auto& out=result.geometryBytes;
+    if(positionIndex.size()>UINT32_MAX||triangles.size()>UINT32_MAX)
+        throw std::runtime_error("Geometry Pool v3: too many vertices or triangles");
+    poolU32(out,static_cast<std::uint32_t>(positionIndex.size()));
+    poolU32(out,static_cast<std::uint32_t>(triangles.size()));
     for(auto const& [point,index]:positionIndex){
-        if(!first)out<<',';
-        first=false;
-        writePoint(out,point);
+        for(auto v:point)poolF32(out,v);
     }
-    out<<"],\"triangles\":[";
-    first=true;
     for(auto const& tri:triangles){
-        if(!first)out<<',';
-        first=false;
-        out<<'['<<positionIndex.at(tri.positions[0])<<','
-           <<positionIndex.at(tri.positions[1])<<','
-           <<positionIndex.at(tri.positions[2])<<']';
+        for(auto const& p:tri.positions)poolU32(out,positionIndex.at(p));
         result.canonicalTriangles.emplace_back(tri.origin);
     }
-    out<<"]}\n";
-    result.geometryJson=out.str();
     return result;
 }
 
 std::string encodeSharedAppearance(
     Mesh const& mesh, SharedMeshEncoding const& geometry,
-    std::string_view geometryHash,
+    std::uint32_t geometryId,
     std::string const& slotsJson,
     std::string const& variantsJson){
     auto const slots=splitBindingArray(slotsJson);
     auto const variants=splitBindingArray(variantsJson);
     if(slots.size()!=geometry.canonicalTriangles.size()||
        variants.size()!=geometry.canonicalTriangles.size())
-        throw std::runtime_error("shared appearance: triangle binding count mismatch");
-    std::ostringstream out;
-    out.imbue(std::locale::classic());
-    out<<std::setprecision(std::numeric_limits<float>::max_digits10);
-    out<<"{\"schema\":2,\"geometry_ref\":\""<<geometryHash
-       <<"\",\"render_layer\":"<<mesh.layer
-       <<",\"uv_complete\":"<<(mesh.uvValid?"true":"false")
-       <<",\"geometry_source\":\""
-       <<(mesh.registryCrossPlanes?"registry_cross_planes":
-          (mesh.registryVisualBounds?"registry_visual_bounds":"native_world_tessellation"))
-       <<"\",\"geometry_confidence\":\""
-       <<(mesh.registryVisualBounds||mesh.registryCrossPlanes?"visual_shape_proxy":"native_observed")
-       <<"\",\"uv_space\":\""
-       <<(mesh.registryVisualBounds||mesh.registryCrossPlanes?"block_face_local":"runtime_terrain_atlas")
-       <<"\",\"normals_reconstructed\":"<<(mesh.normalsReconstructed?"true":"false")
-       <<",\"corner_attributes\":[";
-    bool first=true;
-    for(auto const& triangle:geometry.canonicalTriangles){
-        for(auto index:triangle.originalVertices){
-            if(!first)out<<',';
-            first=false;
-            auto const& v=mesh.vertices[index];
-            out<<'['<<v.nx<<','<<v.ny<<','<<v.nz<<','
-               <<v.u<<','<<v.v<<','<<v.abgr<<']';
+        throw std::runtime_error("Geometry Pool v3: triangle binding count mismatch");
+    if(geometry.canonicalTriangles.size()>UINT32_MAX)
+        throw std::runtime_error("Geometry Pool v3: triangle overflow");
+    std::string out;
+    poolU32(out,geometryId);
+    poolU32(out,mesh.layer);
+    poolU32(out,mesh.registryCrossPlanes?1u:(mesh.registryVisualBounds?0u:2u));
+    poolU32(out,(mesh.uvValid?1u:0u)|(mesh.normalsReconstructed?2u:0u));
+    poolU32(out,static_cast<std::uint32_t>(geometry.canonicalTriangles.size()));
+    for(auto const& triangle:geometry.canonicalTriangles)for(auto index:triangle.originalVertices){
+        auto const& v=mesh.vertices[index];
+        for(float n:{v.nx,v.ny,v.nz,v.u,v.v}){
+            if(!std::isfinite(n))throw std::runtime_error("Geometry Pool v3: invalid appearance float");
+            poolF32(out,n);
         }
+        poolU32(out,v.abgr);
     }
-    out<<"],\"triangle_texture_slots\":[";
-    first=true;
     for(auto const& triangle:geometry.canonicalTriangles){
-        if(!first)out<<',';
-        first=false;
-        out<<slots[triangle.originalTriangle];
+        auto const n=triangle.originalTriangle;
+        poolU32(out,optionalIndex(slots[n]));
+        auto const pair=variantIndex(variants[n]);
+        poolU32(out,pair[0]);
+        poolU32(out,pair[1]);
     }
-    out<<"],\"triangle_texture_variant_indices\":[";
-    first=true;
-    for(auto const& triangle:geometry.canonicalTriangles){
-        if(!first)out<<',';
-        first=false;
-        out<<variants[triangle.originalTriangle];
-    }
-    out<<"]}\n";
-    return out.str();
+    return out;
 }
 } // namespace bsc
