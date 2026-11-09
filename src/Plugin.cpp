@@ -1,4 +1,5 @@
 #include "Capture.h"
+#include "TargetVersion.h"
 #include "Preview.h"
 #include "NativeObservations.h"
 #include <filesystem>
@@ -15,7 +16,7 @@ public:
     BedrockSceneCapture():mod(*ll::mod::NativeMod::current()){}
     bool load(){
         initialize(mod);
-        mod.getLogger().info("BedrockSceneCapture 0.2.0: 1.26.51.1 client build, mod directory: {}",mod.getModDir().string());
+        mod.getLogger().info("BedrockSceneCapture 0.2.0: {} client build, mod directory: {}",TargetGameVersion,mod.getModDir().string());
         return true;
     }
     bool enable(){
@@ -40,7 +41,7 @@ public:
             mod.getLogger().warn("BSC control directory unavailable: {}: {}",controls.string(),controlError.message());
         mod.getLogger().info("BSC enabled: on-demand F7 render hook, F8 model export with deferred native hooks, F9 cancel");
         mod.getLogger().info("BSC remote control directory: {}",controls.string());
-        mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"export"/"1.26.51.1").string());
+        mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"export"/TargetGameVersion).string());
         return true;
     }
     bool disable(){

@@ -1,7 +1,7 @@
 set_xmakever("3.0.0")
 add_rules("mode.release", "mode.debug")
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
-add_requires("levilamina 26.51.9", {configs = {target_type = "client"}})
+add_requires("levilamina 26.60.5", {configs = {target_type = "client"}})
 add_requires("levibuildscript")
 set_toolchains("clang-cl")
 set_runtimes("MD")

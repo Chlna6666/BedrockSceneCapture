@@ -1,4 +1,5 @@
 #include "Library.h"
+#include "TargetVersion.h"
 #include "GeometryPool.h"
 #include <Windows.h>
 #include <bcrypt.h>
@@ -735,8 +736,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"reason\":\"Native ModelPart/Cube base geometry only; scene transforms, text and animation are not yet captured\"}\n";
         std::ostringstream manifest;
         manifest << "{\"schema\":1,\"format\":\"BedrockSceneCaptureModelLibrary\","
-                    "\"target_game_version\":\"1.26.51.1\","
-                    "\"levilamina_sdk_version\":\"26.51.9\","
+                    "\"target_game_version\":\"" << TargetGameVersion << "\","
+                    "\"levilamina_sdk_version\":\"" << TargetLeviLaminaSdkVersion << "\","
                     "\"resource_pack_fingerprint\":null,"
                     "\"resource_pack_fingerprint_status\":\"not_captured\","
                     "\"textures_exported\":false,"

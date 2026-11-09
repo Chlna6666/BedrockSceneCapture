@@ -1,4 +1,5 @@
 #include "Capture.h"
+#include "TargetVersion.h"
 #include "Library.h"
 #include "MeshUtils.h"
 #include "RegistryGeometry.h"
@@ -174,7 +175,7 @@ void reportControlStatus(std::string_view mode){
                "export={}, control={}",
                mode,gameFocused(),(GetAsyncKeyState(VK_F8)&0x8000)!=0,
                BlockGraphics::mInitialized(),gSession!=nullptr,
-               (gMod->getDataDir()/"export"/"1.26.51.1").string(),
+               (gMod->getDataDir()/"export"/TargetGameVersion).string(),
                (gMod->getDataDir()/"control").string());
 }
 void collectNativeSamples(Session& s) {
@@ -271,7 +272,7 @@ void begin(LocalPlayer* player) {
             log().warn("F8: BlockTessellator hook unavailable; registry capture can still run");
     }
     auto session=std::make_unique<Session>();
-    session->library.directory=gMod->getDataDir()/"export"/"1.26.51.1";
+    session->library.directory=gMod->getDataDir()/"export"/TargetGameVersion;
     // Full native state/geometry enumeration works both in the menu and in
     // game. Never inspect ChunkSource or require loaded chunks.
     // Menu exports are definition-only. In-world exports can also contain
@@ -284,9 +285,9 @@ void begin(LocalPlayer* player) {
     for(auto const& [name,type]:types)
         if(type)session->registrationTypes.emplace_back(type.get());
     {
-        // mBlockModelAccess() is declared in SDK 26.51.9 but is not exported
-        // by bedrock_runtime_api.lib (LNK2019). Enumerate only on the game
-        // thread and keep model names, never pointers, across updates.
+        // mBlockModelAccess() was declared but not exported in SDK 26.51.9.
+        // Continue using the game-thread registry enumeration instead of the
+        // unverified SDK symbol; keep model names, never pointers, across updates.
         for(auto const& [name,model]:BlockGraphics::mModels())
             if(model)session->geometryModels.emplace_back(name);
     }
