@@ -400,8 +400,9 @@ void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
     // RendererId indexes the 28-entry native DenseEnumMap. It is not a
     // BlockActorType, and is validated before accessing the renderer.
     auto const id=component.getRendererId();
+    auto const index=static_cast<std::size_t>(id);
     auto const& renderers=dispatcher.mRenderers.get();
-    if(static_cast<std::size_t>(id)>=renderers.size())return;
+    if(index>=renderers.size())return;
     observedRendererMask.fetch_or(std::uint32_t{1}<<static_cast<unsigned>(id),
                                  std::memory_order_relaxed);
     auto const& renderer=renderers[id];
