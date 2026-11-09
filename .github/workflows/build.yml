@@ -26,6 +26,10 @@ jobs:
         run: g++ -std=c++20 -O2 -Wall -Wextra -pedantic -Isrc src/GeometryPool.cpp tools/geometry_pool_self_test.cpp -o /tmp/geometry_pool_test
       - name: Validate canonical topology and independent appearance
         run: /tmp/geometry_pool_test
+      - name: Compile v3 binary pool self-test
+        run: g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -Isrc tools/pool_v3_self_test.cpp -o /tmp/pool_v3_test
+      - name: Validate v3 numeric references and binary offsets
+        run: /tmp/pool_v3_test
       - name: Compile legacy box UV test
         run: g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -Isrc tools/model_uv_self_test.cpp -o /tmp/model_uv_test
       - name: Verify six-face UV layout and invalid dimensions

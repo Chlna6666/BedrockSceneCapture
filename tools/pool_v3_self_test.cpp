@@ -4,9 +4,9 @@
 #include <string>
 int main(){
     bsc::PoolV3 pool;
-    auto g=pool.intern(bsc::PoolKind::Geometry,std::string("\\x00\\x01\\x00",3));
+    auto g=pool.intern(bsc::PoolKind::Geometry,std::string({char(0),char(1),char(0)}));
     assert(g==0);
-    assert(pool.intern(bsc::PoolKind::Geometry,std::string("\\x00\\x01\\x00",3))==g);
+    assert(pool.intern(bsc::PoolKind::Geometry,std::string({char(0),char(1),char(0)}))==g);
     assert(pool.intern(bsc::PoolKind::Appearance,std::string("different"))==0);
     assert(pool.intern(bsc::PoolKind::Material,std::string("m"))==0);
     auto bytes=pool.serialize();
@@ -21,5 +21,5 @@ int main(){
     };
     assert(read32(12)==1&&read32(16)==1&&read32(20)==1&&read32(24)==0);
     assert(read32(28+8)==3);
-    assert(bytes.substr(28+36,3)==std::string("\\x00\\x01\\x00",3));
+    assert(bytes.substr(28+36,3)==std::string({char(0),char(1),char(0)}));
 }

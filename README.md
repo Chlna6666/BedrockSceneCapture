@@ -70,22 +70,17 @@ game update thread; they are not scripts, contain no commands and require no
 keyboard foreground focus. The `status.flag` log distinguishes failed key
 forwarding from a missing game tick/menu hook.
 
-## 统一共享模型资源库（Geometry Pool v2）
+## 统一共享模型资源库（Geometry Pool v3）
 
-F8 新增实际落盘的共享资源池，不再仅对独立 Mesh 计算几何哈希。
+v3 破坏性取代 v2：不再导出 SHA-256 命名的子文件，不保留旧格式读取兼容。
 
-- `geometry_pool.json`：所有被状态引用的共享几何、外观与纹理表索引，`schema=2`。
-- `geometry_pool/geometry/<sha256>.json`：精确 float32 坐标（仅归一化 -0）、三角形拓扑和绕序，无纹理、UV、颜色、渲染层。
-- `geometry_pool/appearance/<sha256>.json`：共享几何引用与对应三角形顺序的法线、UV、顶点颜色、渲染层、纹理槽和变体索引。
-- `geometry_pool/materials/<sha256>.json`：`BlockGraphics` 的纹理名称、图集绑定和变体表。不同 BlockState 可引用同一表。
-- `blocks.json`：每个 `variants[]` 通过 `shared_geometry_refs` 和 `shared_appearance_refs` 引用资源池；状态级 `shared_material_ref` 指向纹理表。每个列表顺序与旧 `mesh_refs` 一致。
+- `geometry_pool.bin`：唯一资源池，前 8 字节 `BSCPOOL3`，后接 little-endian 的版本 `u32=3`、四组 `u32` 数量；目录每项 `(offset: u64, length: u32)`。四组依次为 Geometry、Appearance、Materials、Models。
+- Geometry 为原生精确 `f32` 位置和 `u32` 三角形索引，保持绕序；Appearance 保存法线、UV、顶点颜色与逐三角形材质槽/贴图变体，不合并不同外观。
+- Materials 和 Models 保留完整结构化 JSON，但作为资源池内的单个 payload，避免海量独立文件。
+- `blocks.json`、`entities.json`、`geometry_catalog.json` 中的资源引用均为 `u32`。
+- 采用内存快速指纹选取候选对象，并使用完整字节比较确认去重；指纹不写入导出，不依赖哈希值正确性。
+- ID 只在当前一次导出中有效，不得跨导出或跨游戏版本复用。
+- `manifest.json` 中 `shared_geometry_pool_schema=3`。提交新版本后清理旧 `geometry_pool/`、`geometry_pool.json` 与 `meshes/`。
+- BMCBL 的 `runtime_capture` 只读取 v3，使用二进制目录按需解析资源，并保留独立的 Geometry / Appearance 缓存。
 
-所有方块均按实际几何全局去重：石头、矿石、不同材质石墙、栅栏、楼梯、不同颜色方块等，只有在三角形位置和绕序严格一致时才共用几何。状态 NBT、邻居签名、BlockEntity 模型族、UV 和颜色仍独立保留。含水状态及水面渲染规则不可因固体几何一致而丢弃。
-
-**严格边界**：当前只对三角形次序和不改变绕序的循环顶点置换做精确归一化；不自动合并旋转、镜像、缩放等不同姿态。`mesh_geometry_hashes` 是旧版量化几何提示；新增 `shared_geometry_refs` 才是精确、可寻址的 v2 几何资源 ID。原生网格和视觉 AABB 代理均有来源标签，不能把代理的共享当作已验证模型。
-
-**兼容与体积**：迁移期保留完整 `meshes/` v1 文件和原有状态字段，因此本版本导出目录可能比之前更大。BMCBL 需要增加 v2 解析器并使用共享 GPU 几何缓冲，验证视觉一致后才能关闭 v1 输出并真正减少磁盘容量。`manifest.json` 含 `shared_geometry_pool_schema`、`shared_geometry_count`、`shared_appearance_count`、`shared_material_count` 和 `legacy_meshes_retained`。由于邻居规则、流体及专用 BlockEntity 尚未全量验证，导出继续标记 `complete=false`。
-
-验证新导出：`python tools/verify_model_library.py <F8-export-directory>`。校验每个资源的 SHA-256、引用与三角形/外观流对齐，但仍不能代替客户端的原生模型精确性比对。
-
-Geometry Pool v2-only：`legacy_meshes_retained=false`。旧版 `meshes/`、`mesh_refs`、内联 `texture_bindings` 不再输出，BMCBL 改由 `geometry_pool` 读取。模型覆盖率与规则支持仍需独立验证。
+执行 `tools/verify_model_library.py --self-test` 进行结构校验。Windows 构建由 GitHub Actions 执行；Linux 自测覆盖拓扑、UV、去重和二进制目录格式。
