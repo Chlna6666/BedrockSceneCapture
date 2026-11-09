@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 namespace ll::mod {class NativeMod;}
+class MinecraftGame;
 namespace bsc {
 struct NativeObservation {
     // The 27 network IDs refer to the same process-local block registry
@@ -53,6 +54,12 @@ struct ActorCaptureDiagnostics {
     std::vector<std::string> observedWithoutGeometry;
 };
 ActorCaptureDiagnostics actorCaptureDiagnostics();
+// Install after LeviLamina enables mods, never inside DllMain. Snapshots are
+// created at Bedrock renderer initialization or by safe ready-client fallback.
+bool installStartupModelCapture(ll::mod::NativeMod& mod);
+void tryStartupModelSnapshot(MinecraftGame& game);
+std::uint64_t nativeResourceGeneration();
+std::size_t startupModelCount();
 bool installNativeObservations(ll::mod::NativeMod& mod);
 // F7 installs only actor renderers + live model-part hook, not F6 scene capture.
 bool installActorWireframeObservations(ll::mod::NativeMod& mod);

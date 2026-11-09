@@ -27,12 +27,14 @@ public:
         if(!installCapture()) {
             mod.getLogger().error("BSC enable failed at player tick hook");return false;
         }
-        mod.getLogger().info("BSC enable [2/4]: overlay render hook deferred until F7 / in-world F6");
+        mod.getLogger().info("BSC enable [2/4]: installing early model initialization observer; overlay deferred");
+        if(!installStartupModelCapture(mod))
+            mod.getLogger().warn("BSC startup model observer unavailable; F6 live capture remains usable");
         mod.getLogger().info("BSC enable [3/4]: installing menu update hook");
         if(!installMenuCapture())
             mod.getLogger().warn("BSC menu hook unavailable: in-world F6 remains usable");
-        // Heavy native scene and BlockActor hooks are installed only when F6
-        // is requested in-world, not under the plugin enable path.
+        // Only the lightweight resource-initialization/compile observers
+        // start here. Per-frame native scene hooks still start only on F6.
         mod.getLogger().info("BSC enable [4/4]: initializing control directory; native scene hooks deferred until F6");
         auto const controls=mod.getDataDir()/"control";
         std::error_code controlError;

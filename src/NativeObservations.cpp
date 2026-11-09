@@ -7,6 +7,8 @@
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
 #include "mc/client/renderer/Tessellator.h"
+#include "mc/client/game/MinecraftGame.h"
+#include "mc/client/game/IClientInstance.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
 #include "mc/world/level/BlockSource.h"
@@ -78,6 +80,13 @@ static_assert(static_cast<int>(BlockShape::Count)==159 &&
               static_cast<int>(BlockShape::Lantern)==113,
               "Review BlockShape audit after Bedrock SDK upgrade");
 std::atomic_bool armed{false};
+// Startup snapshots contain owned JSON only; never retain native model
+// pointers across renderer reloads. DllMain and NativeMod::load do no scan.
+std::atomic_bool startupCaptureActive{false};
+std::atomic_bool startupCachePending{true};
+std::atomic_bool rendererInitializing{false};
+std::atomic<std::uint64_t> resourceGeneration{0};
+std::mutex rendererSnapshotMutex;
 // Bit i means the native dispatcher actually rendered renderer-id i during
 // this F6 recording. A registered renderer is NOT a captured UV model.
 std::atomic<std::uint32_t> observedRendererMask{0};
@@ -92,6 +101,7 @@ struct IdHash {
 std::unordered_set<std::array<std::uint32_t,30>,IdHash> seen;
 std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
+std::unordered_map<std::string,std::string> startupActorModels;
 // Capture native box inputs at model construction, before their CPU Cube
 // definitions can be compacted into GPU meshes. These are not synthetic AABBs.
 struct SourceBoxes {
@@ -394,45 +404,49 @@ std::string modelJson(Model const& model,
 void recordActor(char const* label,Model const& model,
                  std::vector<ModelPart const*> const& explicitParts,
                  NativeTextureResources const& resources={}){
-    if(!armed.load(std::memory_order_relaxed))return;
+    bool const prewarming=startupCaptureActive.load(std::memory_order_acquire);
+    if(!prewarming && !armed.load(std::memory_order_relaxed))return;
     std::unique_lock lock(mutex,std::try_to_lock);
     if(!lock.owns_lock())return;
-    // A constructor-time model can have unresolved UVs or zero-size compiled
-    // cubes. Do not let that first partial snapshot permanently suppress a
-    // later complete live-renderer snapshot.
-    auto existing=actorModels.find(label);
-    if(existing!=actorModels.end() &&
-       existing->second.find("\"geometry_complete\":true")!=std::string::npos)
-        return;
-    // Retry incomplete/empty models at most once a second.
-    auto const now=std::chrono::steady_clock::now();
-    auto const it=actorLastAttempt.find(label);
-    if(it!=actorLastAttempt.end() && now-it->second<std::chrono::seconds(1))return;
-    actorLastAttempt[std::string(label)]=now;
+    auto& models=prewarming?startupActorModels:actorModels;
+    auto existing=models.find(label);
+    auto const complete=[](std::string const& json){
+        return json.find("\"geometry_complete\":true")!=std::string::npos;
+    };
+    if(existing!=models.end() && complete(existing->second))return;
+    if(!prewarming){
+        // Do not replace a complete startup model with an incomplete runtime
+        // sample produced after native Cube buffers have been compacted.
+        auto const cached=startupActorModels.find(label);
+        if(cached!=startupActorModels.end() && complete(cached->second))return;
+        auto const now=std::chrono::steady_clock::now();
+        auto const it=actorLastAttempt.find(label);
+        if(it!=actorLastAttempt.end() && now-it->second<std::chrono::seconds(1))return;
+        actorLastAttempt[std::string(label)]=now;
+    }
     auto json=modelJson(model,explicitParts,resources);
     if(json.empty())return;
-    if(existing!=actorModels.end()){
-        // Only replace an incomplete snapshot with one whose native CPU
-        // boxes, polygon mesh and source UVs have all been resolved.
-        if(json.find("\"geometry_complete\":true")==std::string::npos)return;
+    if(existing!=models.end()){
+        if(!complete(json))return;
         existing->second=std::move(json);
     }else{
-        actorModels.emplace(label,std::move(json));
+        models.emplace(label,std::move(json));
     }
-    recordedActorLabels.emplace(label);
+    if(!prewarming)recordedActorLabels.emplace(label);
 }
 
-void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
-                           IVanillaRenderBlockActorComponent& component){
-    if(!armed.load(std::memory_order_relaxed))return;
+void recordRendererModel(BlockActorRenderDispatcher& dispatcher,
+                         BlockActorRendererId id,bool runtimeObserved){
+    bool const prewarming=startupCaptureActive.load(std::memory_order_relaxed);
+    if(!prewarming && !armed.load(std::memory_order_relaxed))return;
     // RendererId indexes the 28-entry native DenseEnumMap. It is not a
     // BlockActorType, and is validated before accessing the renderer.
-    auto const id=component.getRendererId();
     auto const index=static_cast<std::size_t>(id);
     auto const& renderers=dispatcher.mRenderers.get();
     if(index>=renderers.size())return;
-    observedRendererMask.fetch_or(std::uint32_t{1}<<static_cast<unsigned>(id),
-                                 std::memory_order_relaxed);
+    if(runtimeObserved)
+        observedRendererMask.fetch_or(std::uint32_t{1}<<static_cast<unsigned>(id),
+                                     std::memory_order_relaxed);
     auto const& renderer=renderers[id];
     if(!renderer)return;
     // Throttle the expensive model inspection per renderer family, rather
@@ -443,8 +457,8 @@ void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
         std::chrono::steady_clock::now().time_since_epoch()).count();
     auto& last=sampledSecond[index];
     auto prev=last.load(std::memory_order_relaxed);
-    if(prev==second || !last.compare_exchange_strong(
-        prev,second,std::memory_order_relaxed))return;
+    if(!prewarming && (prev==second || !last.compare_exchange_strong(
+        prev,second,std::memory_order_relaxed)))return;
     switch(id){
     case BlockActorRendererId::Skull: {
         auto const* skull=static_cast<SkullBlockRenderer const*>(renderer.get());
@@ -574,6 +588,26 @@ void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
     }
     default:break;
     }
+}
+void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
+                           IVanillaRenderBlockActorComponent& component){
+    recordRendererModel(dispatcher,component.getRendererId(),true);
+}
+void captureExistingRendererModels(BlockActorRenderDispatcher& dispatcher){
+    // Called only after the native initialization method returned or when
+    // the client reports render readiness. No pointers escape this function.
+    auto const& renderers=dispatcher.mRenderers.get();
+    std::size_t available=0;
+    for(std::size_t i=0;i<RendererAudit.size() && i<renderers.size();++i)
+        if(renderers[static_cast<BlockActorRendererId>(i)])++available;
+    if(available==0)return;
+    startupCaptureActive.store(true,std::memory_order_release);
+    for(std::size_t i=0;i<RendererAudit.size() && i<renderers.size();++i){
+        if(!renderers[static_cast<BlockActorRendererId>(i)])continue;
+        recordRendererModel(dispatcher,static_cast<BlockActorRendererId>(i),false);
+    }
+    startupCaptureActive.store(false,std::memory_order_release);
+    startupCachePending.store(false,std::memory_order_release);
 }
 
 void reconstructMissingNormals(Mesh& mesh){
@@ -809,7 +843,8 @@ LL_TYPE_INSTANCE_HOOK(BSCPartAddBoxHook,ll::memory::HookPriority::Normal,
 // face and the final cube pivot, mirror and rotation.
 LL_TYPE_INSTANCE_HOOK(BSCPartCompileCubesHook,ll::memory::HookPriority::Normal,
     ModelPart,&ModelPart::compileCubes,void,Tessellator& tess) {
-    if(armed.load(std::memory_order_relaxed)){
+    if(armed.load(std::memory_order_relaxed) ||
+       startupCaptureActive.load(std::memory_order_relaxed)){
         auto const& cubes=this->mCubes.get();
         if(!cubes.empty() && cubes.size()<=MaxSourceBoxesPerPart){
             std::unique_lock lock(sourceBoxesMutex,std::try_to_lock);
@@ -1073,6 +1108,43 @@ LL_TYPE_INSTANCE_HOOK(BSCPotWireHook,ll::memory::HookPriority::Normal,
 // golem statues) via the shared base renderer, not by assuming their visual
 // model can be recovered from the ordinary BlockTessellator.
 
+LL_TYPE_INSTANCE_HOOK(BSCBlockActorInitializerHook,ll::memory::HookPriority::Normal,
+    BlockActorRenderDispatcher,&BlockActorRenderDispatcher::initializeBlockEntityRenderers,void,
+    Bedrock::NotNullNonOwnerPtr<GeometryGroup> const& geometryGroup,
+    std::shared_ptr<mce::TextureGroup> textureGroup,
+    BlockTessellator& blockTessellator,
+    Bedrock::NotNullNonOwnerPtr<ActorResourceDefinitionGroup const> const& actorDefinitions,
+    ResourcePackManager& resourcePacks,
+    Bedrock::NotNullNonOwnerPtr<ResourceLoadManager> resourceLoader,
+    BaseGameVersion const& baseGameVersion,
+    Experiments const& experiments){
+    // The hook is installed from NativeMod::enable, not in DllMain.
+    // This function is the Bedrock renderer's own resource-init boundary.
+    std::lock_guard rebuild(rendererSnapshotMutex);
+    rendererInitializing.store(true,std::memory_order_release);
+    resourceGeneration.fetch_add(1,std::memory_order_acq_rel);
+    startupCachePending.store(true,std::memory_order_release);
+    {
+        std::lock_guard lock(mutex);
+        startupActorModels.clear();
+    }
+    {
+        std::lock_guard lock(sourceBoxesMutex);
+        sourceBoxes.clear();
+    }
+    startupCaptureActive.store(true,std::memory_order_release);
+    origin(geometryGroup,std::move(textureGroup),blockTessellator,
+           actorDefinitions,resourcePacks,resourceLoader,baseGameVersion,experiments);
+    // The renderer table is initialized here; snapshot its CPU models before
+    // any following world render, then drop transient ModelPart address keys.
+    captureExistingRendererModels(*this);
+    startupCaptureActive.store(false,std::memory_order_release);
+    {
+        std::lock_guard lock(sourceBoxesMutex);
+        sourceBoxes.clear();
+    }
+    rendererInitializing.store(false,std::memory_order_release);
+}
 using ExplicitActorRenderFn=void(BlockActorRenderDispatcher::*)(
     BaseActorRenderContext&,BlockSource&,IVanillaRenderBlockActorComponent&,
     Block const&,Vec3 const&,BlockPos const&,bool,mce::MaterialPtr const&,
@@ -1112,6 +1184,7 @@ LL_TYPE_INSTANCE_HOOK(BSCDispatcherRenderHook,ll::memory::HookPriority::Normal,
     recordDispatchedActor(*this,component);
 }
 bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
+bool installedStartupInitializer{};
 bool installedWorld{},installedWorldMasked{},installedDispatch{},installedImplicitDispatch{},installedChest{},installedSign{},
      installedHanging{},installedPiston{},installedPot{};
 }
@@ -1160,6 +1233,53 @@ bool installActorWireframeObservations(ll::mod::NativeMod& mod){
         mod.getLogger().warn("F7/F6: ModelPart render hooks unavailable; dispatcher capture still active");
     return installedDispatch || installedImplicitDispatch || partHook;
 }
+bool installStartupModelCapture(ll::mod::NativeMod& mod){
+    if(!installedStartupInitializer){
+        auto const status=BSCBlockActorInitializerHook::hook();
+        installedStartupInitializer=(status==0);
+        if(installedStartupInitializer)
+            mod.getLogger().info("BSC startup: BlockActor renderer initialization observer active");
+        else
+            mod.getLogger().warn("BSC startup: native renderer initialization observer unavailable, hook_status={}; ready-client fallback remains available",status);
+    }
+    // This is the only exported ModelPart construction path verified on 26.60.5.
+    // Install it before models are compiled, not when F6 is first pressed.
+    if(!installedPartCompile){
+        auto const status=BSCPartCompileCubesHook::hook();
+        installedPartCompile=(status==0);
+        if(!installedPartCompile)
+            mod.getLogger().warn("BSC startup: ModelPart::compileCubes hook unavailable, hook_status={}",status);
+    }
+    return installedStartupInitializer || installedPartCompile;
+}
+std::uint64_t nativeResourceGeneration(){
+    return resourceGeneration.load(std::memory_order_acquire);
+}
+std::size_t startupModelCount(){
+    std::lock_guard lock(mutex);
+    return startupActorModels.size();
+}
+void tryStartupModelSnapshot(MinecraftGame& game){
+    if(!startupCachePending.load(std::memory_order_acquire) ||
+       rendererInitializing.load(std::memory_order_acquire))return;
+    static auto lastAttempt=std::chrono::steady_clock::time_point{};
+    auto const now=std::chrono::steady_clock::now();
+    if(now-lastAttempt<std::chrono::seconds(1))return;
+    lastAttempt=now;
+    if(!game.isPrimaryClientInstanceReady())return;
+    auto* client=game.getPrimaryClientInstance().get().get();
+    if(!client || !client->isReadyToRender())return;
+    std::unique_lock rebuild(rendererSnapshotMutex,std::try_to_lock);
+    if(!rebuild.owns_lock() ||
+       !startupCachePending.load(std::memory_order_acquire) ||
+       rendererInitializing.load(std::memory_order_acquire))return;
+    // Virtual IClientInstance interface: no hard link to an MCNAPI thunk.
+    captureExistingRendererModels(client->getBlockEntityRenderDispatcher());
+    if(!startupCachePending.load(std::memory_order_acquire)){
+        std::lock_guard lock(sourceBoxesMutex);
+        sourceBoxes.clear();
+    }
+}
 bool installNativeObservations(ll::mod::NativeMod& mod){
     if(installedWorld && installedWorldMasked)return true;
     auto& logger=mod.getLogger();
@@ -1184,6 +1304,8 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         []{return BSCPartAddBoxHook::hook();});
     install("ModelPart::loadBoxes",installedPartLoad,
         []{return BSCPartLoadBoxesHook::hook();});
+    // This hook is already installed during NativeMod::enable. Retry only
+    // if the early hook failed; never install it twice.
     install("ModelPart::compileCubes",installedPartCompile,
         []{return BSCPartCompileCubesHook::hook();});
     logger.info("F6 native hooks initialized: world={}, masked_world={}, dispatcher_explicit={}, dispatcher_implicit={}, direct_actor_hooks={}/5, source_box_hooks={}/3",
@@ -1233,7 +1355,9 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
     diagnostics.implicitDispatcherHook=installedImplicitDispatch;
     diagnostics.observedRendererMask=observedRendererMask.load(std::memory_order_relaxed);
     std::lock_guard lock(mutex);
-    diagnostics.capturedModels=recordedActorLabels.size();
+    diagnostics.capturedModels=actorModels.size();
+    for(auto const& [name,json]:startupActorModels)
+        if(!actorModels.contains(name))++diagnostics.capturedModels;
     diagnostics.sourceAddBoxHook=installedPartAdd;
     diagnostics.sourceLoadBoxesHook=installedPartLoad;
     diagnostics.sourceCompileCubesHook=installedPartCompile;
@@ -1275,7 +1399,8 @@ void clearNativeObservations(){
     actorModels.clear();
     // Source-box keys are raw ModelPart addresses. Never carry an address
     // from a previous F6 session into a newly constructed model instance.
-    // All explicit F6 built-in templates are reconstructed after arming.
+    // Startup snapshots are owned JSON and survive F6 resets. Only raw
+    // construction-time address keys are discarded here.
     {
         std::lock_guard sourceLock(sourceBoxesMutex);
         sourceBoxes.clear();
@@ -1293,11 +1418,24 @@ std::vector<ActorModelSnapshot> takeActorModels(){
     out.reserve(actorModels.size());
     for(auto& [name,geometry]:actorModels)
         out.push_back(ActorModelSnapshot{name,std::move(geometry)});
+    for(auto const& [name,geometry]:startupActorModels)
+        if(!actorModels.contains(name))
+            out.push_back(ActorModelSnapshot{name,geometry});
     actorModels.clear();
     return out;
 }
 void uninstallNativeObservations(){
     uninstallActorWireframePartHook();
+    if(installedStartupInitializer){
+        BSCBlockActorInitializerHook::unhook();
+        installedStartupInitializer=false;
+    }
+    startupCaptureActive.store(false,std::memory_order_release);
+    startupCachePending.store(false,std::memory_order_release);
+    {
+        std::lock_guard lock(mutex);
+        startupActorModels.clear();
+    }
     armed.store(false,std::memory_order_release);
     if(installedPartCompile){BSCPartCompileCubesHook::unhook();installedPartCompile=false;}
     if(installedPartLoad){BSCPartLoadBoxesHook::unhook();installedPartLoad=false;}

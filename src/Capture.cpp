@@ -149,6 +149,7 @@ struct Session {
     bool saveRequested{};
     std::map<std::tuple<int,std::array<float,6>,std::uint32_t>,std::shared_ptr<Mesh const>> registryBoxCache;
     std::unordered_map<BlockGraphics const*,std::shared_ptr<std::vector<TextureBinding> const>> textureCache;
+    std::uint64_t resourceGeneration{};
     std::vector<std::string> geometryModels;
     std::size_t geometryCursor{};
 };
@@ -266,6 +267,8 @@ void finish(bool cancelled) {
                        sample.missingUvMeshes,audit.renderPath);
     }
     auto actorStatus=actorCaptureDiagnostics();
+    log().info("F6 BlockActor pre-cache: models={}, renderer_generation={}",
+               startupModelCount(),nativeResourceGeneration());
     log().info("F6 BlockActor hooks: dispatcher={}, chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
                actorStatus.dispatcherHook,actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
                actorStatus.hooksInstalled[2],actorStatus.hooksInstalled[3],
@@ -347,6 +350,7 @@ void begin(LocalPlayer* player) {
     // real native scene and BlockActor model samples.
     session->library.definitionOnly=(player==nullptr);
     session->player=player;
+    session->resourceGeneration=nativeResourceGeneration();
     // Use every registered permutation, not just the states present in loaded chunks.
     auto const& types=BlockTypeRegistry::get().mBlockLookupMap.get();
     // Expand registered permutations incrementally rather than blocking F6 startup.
@@ -710,6 +714,11 @@ void registerNativeGeometry(Session& s,Clock::time_point start) {
     }
 }
 void advance(Session& s) {
+    if(s.resourceGeneration!=nativeResourceGeneration()){
+        log().warn("F6: renderer resource generation changed during export; cancelling stale model capture");
+        finish(true);
+        return;
+    }
     // Renderer reload can invalidate BlockGraphics and atlas pointers during
     // a multi-tick export. Abort before touching those pointers.
     if(!graphicsReady()){
@@ -840,6 +849,9 @@ void onTick(LocalPlayer& player) {
 }
 void onMenuUpdate(MinecraftGame& game){
     if(!gMod)return;
+    // Also recovers models initialized before NativeMod::enable installed
+    // the public renderer initializer hook.
+    tryStartupModelSnapshot(game);
     if(game.isPrimaryClientInstanceReady()){
         // gsl::not_null wraps a Bedrock::NonOwnerPointer.
         auto* client=game.getPrimaryClientInstance().get().get();
