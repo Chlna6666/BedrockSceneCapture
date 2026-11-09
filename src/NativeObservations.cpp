@@ -1,4 +1,5 @@
 #include "NativeObservations.h"
+#include "ModelUv.h"
 #include "NativeCoordinates.h"
 #include "Preview.h"
 #include "ActorWireframe.h"
@@ -14,6 +15,7 @@
 #include "mc/client/model/models/Model.h"
 #include "mc/client/model/models/ChestModel.h"
 #include "mc/client/model/models/BellModel.h"
+#include "mc/client/model/models/BedModel.h"
 #include "mc/client/model/models/PistonArmModel.h"
 #include "mc/client/model/models/EnchantingBookModel.h"
 #include "mc/client/model/Geometry.h"
@@ -45,6 +47,7 @@
 #include <locale>
 #include <mutex>
 #include <sstream>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 namespace bsc {
@@ -163,10 +166,11 @@ std::string modelJson(Model const& model,
      "\"coordinate_space\":\"model_local\",\"animation_pose\":\"not_captured\",\"parts\":[";
     bool firstPart=true;
     std::size_t cubes=0,polyFaces=0,sourceBoxCount=0,unresolvedCubes=0;
-    std::size_t incompleteSourceUVs=0;
+    std::size_t incompleteSourceUVs=0,incompleteNativeUVs=0;
     for(std::size_t index=0;index<parts.size();++index){
         auto const* part=parts[index];
         if(!part)continue;
+        std::size_t missingPartUVs=0,completeSourceUVs=0;
         if(!firstPart)o<<',';
         firstPart=false;
         auto const parent=indices.find(part->mParent);
@@ -199,7 +203,18 @@ std::string modelJson(Model const& model,
             o<<",\"mirrored\":"<<(cube.mMirrored?"true":"false")<<",\"faces\":[";
             bool firstFace=true;
             auto const& faces=cube.mFaceData.get();
+            bool cubeUVComplete=!faces.empty();
+            std::size_t validFaces=0;
             for(std::size_t face=0;face<faces.size();++face){
+                auto const& uv=faces[face].mUV.get();
+                auto const& sz=faces[face].mUVSize.get();
+                if(!std::isfinite(uv.x)||!std::isfinite(uv.y)||
+                   !std::isfinite(sz.x)||!std::isfinite(sz.y)||
+                   (faces[face].mFaceValid && (sz.x==0.f||sz.y==0.f))){
+                    if(faces[face].mFaceValid)cubeUVComplete=false;
+                    continue;
+                }
+                if(faces[face].mFaceValid)++validFaces;
                 if(!firstFace)o<<',';
                 firstFace=false;
                 o<<"{\"face\":"<<face
@@ -209,7 +224,9 @@ std::string modelJson(Model const& model,
                 o<<",\"material_index\":"<<faces[face].mMaterialInstanceListIndex
                  <<",\"uv_rotation\":"<<static_cast<int>(faces[face].mUvRotation)<<'}';
             }
-            o<<"]}";
+            cubeUVComplete=cubeUVComplete && validFaces>0;
+            if(!cubeUVComplete)++missingPartUVs;
+            o<<"],\"uv_complete\":"<<(cubeUVComplete?"true":"false")<<'}';
         }
         o<<"]";
         // Read the exact model-construction box parameters if compiled GPU
@@ -223,13 +240,18 @@ std::string modelJson(Model const& model,
                 for(std::size_t i=0;i<it->second.boxes.size();++i){
                     if(i)o<<',';
                     o<<it->second.boxes[i];
-                    if(it->second.boxes[i].find("\"uv_complete\":false")!=std::string::npos)
-                        ++incompleteSourceUVs;
+                    if(it->second.boxes[i].find("\"uv_complete\":true")!=std::string::npos)
+                        ++completeSourceUVs;
+                    else ++incompleteSourceUVs;
                 }
                 o<<']';
                 sourceBoxCount+=it->second.boxes.size();
             }
         }
+        // CPU Cubes and source boxes may represent the same boxes. A complete
+        // source face layout can recover missing live Cube UV data.
+        if(missingPartUVs>completeSourceUVs)
+            incompleteNativeUVs+=missingPartUVs-completeSourceUVs;
         // Some data-driven BlockActors use an indexed polygon mesh rather
         // than procedural Cubes. Preserve the original vertex/normal/UV
         // indices and topology instead of approximating it with a box.
@@ -252,6 +274,13 @@ std::string modelJson(Model const& model,
                 if(!validVertex(v))valid=false;
             for(auto const& quad:quads)for(auto const& v:quad)
                 if(!validVertex(v))valid=false;
+        }
+        if(!tris.empty()||!quads.empty()){
+            bool const hasUV=!uvs.empty() &&
+                std::all_of(uvs.begin(),uvs.end(),[](auto const& uv){
+                    return std::isfinite(uv.x)&&std::isfinite(uv.y);
+                });
+            if(!hasUV)++incompleteNativeUVs;
         }
         if(valid && (!tris.empty()||!quads.empty())){
             polyFaces+=tris.size()+quads.size();
@@ -294,8 +323,9 @@ std::string modelJson(Model const& model,
     }
     o<<"],\"unresolved_compiled_cubes\":"<<unresolvedCubes
      <<",\"incomplete_source_uv_boxes\":"<<incompleteSourceUVs
+     <<",\"incomplete_native_uv\":"<<incompleteNativeUVs
      <<",\"geometry_complete\":"
-     <<(unresolvedCubes==0 && incompleteSourceUVs==0?"true":"false")
+     <<(unresolvedCubes==0 && incompleteSourceUVs==0 && incompleteNativeUVs==0?"true":"false")
      <<"}\n";
     return cubes||polyFaces||sourceBoxCount?o.str():std::string{};
 }
@@ -592,16 +622,20 @@ LL_TYPE_INSTANCE_HOOK(BSCPartCompileCubesHook,ll::memory::HookPriority::Normal,
                         o<<",\"pivot\":";vec3(o,pivot);
                         o<<",\"mirror\":"<<(cube.mMirrored?"true":"false")<<",\"faces\":[";
                         bool first=true;
-                        bool complete=true;
                         auto const& faces=cube.mFaceData.get();
+                        bool complete=!faces.empty();
+                        std::size_t goodFaces=0;
                         for(std::size_t i=0;i<faces.size();++i){
                             auto const& uv=faces[i].mUV.get();
                             auto const& extent=faces[i].mUVSize.get();
                             if(!finite(uv.x)||!finite(uv.y)||
-                               !finite(extent.x)||!finite(extent.y)){
+                               !finite(extent.x)||!finite(extent.y)||
+                               (faces[i].mFaceValid &&
+                                (extent.x==0.f||extent.y==0.f))){
                                 complete=false;
                                 continue;
                             }
+                            if(faces[i].mFaceValid)++goodFaces;
                             if(!first)o<<',';
                             first=false;
                             o<<"{\"face\":"<<i<<",\"valid\":"
@@ -611,6 +645,7 @@ LL_TYPE_INSTANCE_HOOK(BSCPartCompileCubesHook,ll::memory::HookPriority::Normal,
                             o<<",\"material_index\":"<<faces[i].mMaterialInstanceListIndex
                              <<",\"uv_rotation\":"<<static_cast<int>(faces[i].mUvRotation)<<'}';
                         }
+                        complete=complete && goodFaces>0;
                         o<<"],\"uv_complete\":"<<(complete?"true":"false")<<'}';
                         compiled.push_back(o.str());
                     }
@@ -663,6 +698,7 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
         bool const hasFaceUVs=box.mUsesFaceUVs;
         bool completeFaceUVs=hasFaceUVs;
         bool firstValidFace=true;
+        std::size_t goodFaces=0;
         auto const& faces=box.mFaceUVs.get();
         if(hasFaceUVs)for(std::size_t i=0;i<faces.size();++i){
             auto const& uv=faces[i].mUV.get();
@@ -671,6 +707,7 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
                 completeFaceUVs=false;
                 continue;
             }
+            if(faces[i].mFaceValid)++goodFaces;
             if(!firstValidFace)out<<',';
             firstValidFace=false;
             out<<"{\"face\":"<<i<<",\"valid\":"
@@ -681,8 +718,25 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
                <<",\"uv_rotation\":"<<static_cast<int>(faces[i].mUvRotation)<<'}';
         }
         auto const& tex=box.mTex.get();
-        out<<"],\"legacy_texture_offset\":["<<tex.x<<','<<tex.y<<']'
-           <<",\"uv_complete\":"<<(completeFaceUVs?"true":"false")<<'}';
+        if(!hasFaceUVs){
+            auto const uvNet=expandLegacyBoxUV({tex.x,tex.y},{size.x,size.y,size.z});
+            if(uvNet){
+                for(auto const& face:*uvNet){
+                    if(!firstValidFace)out<<',';
+                    firstValidFace=false;
+                    out<<"{\"name\":\""<<face.name<<"\",\"valid\":true,\"uv\":["
+                       <<face.uv[0]<<','<<face.uv[1]<<"],\"uv_size\":["
+                       <<face.uvSize[0]<<','<<face.uvSize[1]<<"]}";
+                }
+                completeFaceUVs=true;
+            }
+        }else completeFaceUVs=completeFaceUVs && goodFaces>0;
+        out<<"],\"uv_mapping\":\""
+           <<(hasFaceUVs?"native_per_face":"legacy_box_unfold")
+           <<"\",\"uv_space\":\"texture_pixels\",\"legacy_texture_offset\":";
+        if(finite(tex.x)&&finite(tex.y))out<<'['<<tex.x<<','<<tex.y<<']';
+        else out<<"null";
+        out<<",\"uv_complete\":"<<(completeFaceUVs?"true":"false")<<'}';
         dest.boxes.emplace_back(out.str());
     }
 }
@@ -959,6 +1013,19 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
             discardCachedParts(model,{&base,&arm,&head});
             logTemplate("piston_arm");
         }
+        // Restore bed construction-time boxes after renderer GPU compilation.
+        auto captureBed=[&]<typename T>(){
+            if constexpr(std::is_default_constructible_v<T>){
+                T model;
+                std::initializer_list<ModelPart const*> const parts={
+                    &model.mBody.get(),&model.mLeg0.get(),&model.mLeg1.get(),
+                    &model.mLeg2.get(),&model.mLeg3.get()};
+                recordActor("bed",model,parts);
+                discardCachedParts(model,parts);
+                logTemplate("bed");
+            }
+        };
+        captureBed.template operator()<BedModel>();
         // Enchanting table and lectern books are independent native
         // seven-bone models; their live poses must remain dynamic.
         for(bool onLectern:{false,true}){
