@@ -24,6 +24,7 @@
 #include "mc/client/model/Geometry.h"
 #include "mc/client/model/geom/ModelPart.h"
 #include "mc/client/model/geom/Cube.h"
+#include "mc/client/renderer/BaseActorRenderContext.h"
 #include "mc/client/renderer/blockactor/BlockActorRenderDispatcher.h"
 #include "mc/client/renderer/blockactor/ChestRenderer.h"
 #include "mc/client/renderer/blockactor/SignRenderer.h"
@@ -406,16 +407,16 @@ void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
     }
     case BlockActorRendererId::Enchanter: {
         auto const& model=static_cast<EnchantingTableRenderer const*>(renderer.get())->mBook.get();
-        auto const& parts=model.mBook.get();
-        recordActor("enchanting_book",model,{&parts[0],&parts[1],&parts[2],
-            &parts[3],&parts[4],&parts[5],&parts[6]});
+        auto const& parts=model.mBook;
+        recordActor("enchanting_book",model,{&parts[0].get(),&parts[1].get(),&parts[2].get(),
+            &parts[3].get(),&parts[4].get(),&parts[5].get(),&parts[6].get()});
         break;
     }
     case BlockActorRendererId::Lectern: {
         auto const& model=static_cast<LecternRenderer const*>(renderer.get())->mBook.get();
-        auto const& parts=model.mBook.get();
-        recordActor("lectern_book",model,{&parts[0],&parts[1],&parts[2],
-            &parts[3],&parts[4],&parts[5],&parts[6]});
+        auto const& parts=model.mBook;
+        recordActor("lectern_book",model,{&parts[0].get(),&parts[1].get(),&parts[2].get(),
+            &parts[3].get(),&parts[4].get(),&parts[5].get(),&parts[6].get()});
         break;
     }
     default:break;
@@ -872,7 +873,7 @@ using ExplicitActorRenderFn=void(BlockActorRenderDispatcher::*)(
     BaseActorRenderContext&,BlockSource&,IVanillaRenderBlockActorComponent&,
     Block const&,Vec3 const&,BlockPos const&,bool,mce::MaterialPtr const&,
     mce::ClientTexture const*,int,std::optional<dragon::RenderMetadata>);
-constexpr ExplicitActorRenderFn kExplicitActorRender=
+inline const ExplicitActorRenderFn kExplicitActorRender=
     static_cast<ExplicitActorRenderFn>(&BlockActorRenderDispatcher::render);
 LL_TYPE_INSTANCE_HOOK(BSCDispatcherRenderHook,ll::memory::HookPriority::Normal,
     BlockActorRenderDispatcher,kExplicitActorRender,void,
