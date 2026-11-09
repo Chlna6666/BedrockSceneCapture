@@ -733,7 +733,9 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
         }
         auto const& tex=box.mTex.get();
         if(!hasFaceUVs){
-            auto const uvNet=expandLegacyBoxUV({tex.x,tex.y},{size.x,size.y,size.z});
+            auto const uvNet=expandLegacyBoxUV(
+                {static_cast<float>(tex.x),static_cast<float>(tex.y)},
+                {static_cast<float>(size.x),static_cast<float>(size.y),static_cast<float>(size.z)});
             if(uvNet){
                 for(auto const& face:*uvNet){
                     if(!firstValidFace)out<<',';
