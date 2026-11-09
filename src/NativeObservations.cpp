@@ -798,7 +798,7 @@ LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
          &model.mChainR1.get(),&model.mChainR2.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCBedModelHook,ll::memory::HookPriority::Normal,
-    BedRenderer,ll::memory::SymbolView{"?$render@BedRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    BedRenderer,&BedRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
@@ -807,7 +807,7 @@ LL_TYPE_INSTANCE_HOOK(BSCBedModelHook,ll::memory::HookPriority::Normal,
         &model.mLeg1.get(),&model.mLeg2.get(),&model.mLeg3.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCShulkerModelHook,ll::memory::HookPriority::Normal,
-    ShulkerBoxRenderer,ll::memory::SymbolView{"?$render@ShulkerBoxRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    ShulkerBoxRenderer,&ShulkerBoxRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
@@ -815,7 +815,7 @@ LL_TYPE_INSTANCE_HOOK(BSCShulkerModelHook,ll::memory::HookPriority::Normal,
     recordActor("shulker_box",model,{&model.mLid.get(),&model.mBase.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCBellModelHook,ll::memory::HookPriority::Normal,
-    BellBlockActorRenderer,ll::memory::SymbolView{"?$render@BellBlockActorRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    BellBlockActorRenderer,&BellBlockActorRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
@@ -836,7 +836,7 @@ LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
 // These share the live ModelPart observer; they do not claim export of
 // geometry for which the SDK exposes only opaque GPU buffers.
 LL_TYPE_INSTANCE_HOOK(BSCBannerWireHook,ll::memory::HookPriority::Normal,
-    BannerRenderer,ll::memory::SymbolView{"?$render@BannerRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    BannerRenderer,&BannerRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
@@ -848,25 +848,25 @@ LL_TYPE_INSTANCE_HOOK(BSCPotWireHook,ll::memory::HookPriority::Normal,
     origin(ctx,data);
 }
 LL_TYPE_INSTANCE_HOOK(BSCConduitWireHook,ll::memory::HookPriority::Normal,
-    ConduitRenderer,ll::memory::SymbolView{"?$render@ConduitRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    ConduitRenderer,&ConduitRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
 }
 LL_TYPE_INSTANCE_HOOK(BSCLecternWireHook,ll::memory::HookPriority::Normal,
-    LecternRenderer,ll::memory::SymbolView{"?$render@LecternRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    LecternRenderer,&LecternRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
 }
 LL_TYPE_INSTANCE_HOOK(BSCEnchantingBookWireHook,ll::memory::HookPriority::Normal,
-    EnchantingTableRenderer,ll::memory::SymbolView{"?$render@EnchantingTableRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    EnchantingTableRenderer,&EnchantingTableRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
 }
 LL_TYPE_INSTANCE_HOOK(BSCBeaconWireHook,ll::memory::HookPriority::Normal,
-    BeaconRenderer,ll::memory::SymbolView{"?$render@BeaconRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    BeaconRenderer,&BeaconRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
@@ -875,7 +875,7 @@ LL_TYPE_INSTANCE_HOOK(BSCBeaconWireHook,ll::memory::HookPriority::Normal,
 // golem statues) via the shared base renderer, not by assuming their visual
 // model can be recovered from the ordinary BlockTessellator.
 LL_TYPE_INSTANCE_HOOK(BSCSerializedActorWireHook,ll::memory::HookPriority::Normal,
-    SerializedActorRenderer,ll::memory::SymbolView{"?$render@SerializedActorRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
+    SerializedActorRenderer,&SerializedActorRenderer::$render,void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
