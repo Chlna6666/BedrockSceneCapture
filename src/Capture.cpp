@@ -4,6 +4,7 @@
 #include "MeshUtils.h"
 #include "RegistryGeometry.h"
 #include "NativeObservations.h"
+#include "RendererAudit.h"
 #include "StaticModels.h"
 #include "Preview.h"
 #include "ll/api/memory/Hook.h"
@@ -260,8 +261,21 @@ void finish(bool cancelled) {
                actorStatus.hooksInstalled[4],actorStatus.hooksInstalled[5],
                actorStatus.hooksInstalled[6],
                actorStatus.capturedModels,actorStatus.observedWithoutGeometry.size());
+    gSession->library.observedActorRendererMask=actorStatus.observedRendererMask;
+    log().info("F6 renderer dispatcher hooks: explicit={}, implicit={}",
+               actorStatus.explicitDispatcherHook,actorStatus.implicitDispatcherHook);
     log().info("F6 native dispatcher observed mask: 0x{:08x} (28 renderer IDs; observed != captured UV geometry)",
                 actorStatus.observedRendererMask);
+    for(std::size_t index=0;index<RendererAudit.size();++index){
+        if(!(actorStatus.observedRendererMask & (std::uint32_t{1}<<index)))continue;
+        auto const& entry=RendererAudit[index];
+        if(entry.capturePath=="runtime_only")
+            log().warn("F6 renderer observed: id={} {}, path={}; live rendering only, no complete CPU UV mesh",
+                       index,entry.name,entry.capturePath);
+        else
+            log().info("F6 renderer observed: id={} {}, path={}; UV completeness remains per-model",
+                       index,entry.name,entry.capturePath);
+    }
     log().info("F6 native box construction hooks: add_box={}, load_boxes={}, compile_cubes={}, retained_parts={}, source_boxes={}",
                actorStatus.sourceAddBoxHook,actorStatus.sourceLoadBoxesHook,
                actorStatus.sourceCompileCubesHook,actorStatus.retainedSourceParts,actorStatus.retainedSourceBoxes);

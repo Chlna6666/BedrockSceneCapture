@@ -87,6 +87,7 @@ struct LibraryData {
     bool cancelled{};
     bool definitionOnly{};
     NativeCaptureCounters nativeCounters{};
+    std::uint32_t observedActorRendererMask{};
 };
 bool saveLibrary(LibraryData const&, std::string& error);
 std::string hexBytes(std::string const&);

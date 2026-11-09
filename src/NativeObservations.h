@@ -35,6 +35,7 @@ struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell, piston arm.
     std::array<bool,7> hooksInstalled{};
     bool dispatcherHook{};
+    bool explicitDispatcherHook{},implicitDispatcherHook{};
     // Native BlockActorRendererId values 0..27 observed during F6, not a
     // claim that the corresponding UV mesh was successfully exported.
     std::uint32_t observedRendererMask{};

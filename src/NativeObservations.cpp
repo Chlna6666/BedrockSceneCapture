@@ -1,5 +1,6 @@
 #include "NativeObservations.h"
 #include "ModelUv.h"
+#include "RendererAudit.h"
 #include "NativeCoordinates.h"
 #include "Preview.h"
 #include "ActorWireframe.h"
@@ -68,6 +69,8 @@
 #include <unordered_set>
 namespace bsc {
 namespace {
+static_assert(RendererAudit.size()==static_cast<std::size_t>(BlockActorRendererId::Count),
+              "Review every BlockActorRendererId after upgrading Bedrock SDK");
 std::atomic_bool armed{false};
 // Bit i means the native dispatcher actually rendered renderer-id i during
 // this F6 recording. A registered renderer is NOT a captured UV model.
@@ -970,6 +973,24 @@ using ExplicitActorRenderFn=void(BlockActorRenderDispatcher::*)(
     mce::ClientTexture const*,int,std::optional<dragon::RenderMetadata>);
 inline const ExplicitActorRenderFn kExplicitActorRender=
     static_cast<ExplicitActorRenderFn>(&BlockActorRenderDispatcher::render);
+using ImplicitActorRenderFn=void(BlockActorRenderDispatcher::*)(
+    BaseActorRenderContext&,BlockSource&,IVanillaRenderBlockActorComponent&,
+    Block const&,bool,mce::MaterialPtr const&,mce::ClientTexture const*,
+    int,std::optional<dragon::RenderMetadata>);
+inline const ImplicitActorRenderFn kImplicitActorRender=
+    static_cast<ImplicitActorRenderFn>(&BlockActorRenderDispatcher::render);
+// Both overloads are MCAPI. Some 26.60.x paths call the implicit overload
+// without forwarding to the explicit-position overload. Hooking both avoids
+// silently losing BlockActors; per-family capture is throttled and deduped.
+LL_TYPE_INSTANCE_HOOK(BSCDispatcherImplicitRenderHook,ll::memory::HookPriority::Normal,
+    BlockActorRenderDispatcher,kImplicitActorRender,void,
+    BaseActorRenderContext& ctx,BlockSource& source,
+    IVanillaRenderBlockActorComponent& component,Block const& block,bool alpha,
+    mce::MaterialPtr const& material,mce::ClientTexture const* texture,
+    int breaking,std::optional<dragon::RenderMetadata> metadata){
+    origin(ctx,source,component,block,alpha,material,texture,breaking,metadata);
+    recordDispatchedActor(*this,component);
+}
 LL_TYPE_INSTANCE_HOOK(BSCDispatcherRenderHook,ll::memory::HookPriority::Normal,
     BlockActorRenderDispatcher,kExplicitActorRender,void,
     BaseActorRenderContext& ctx,BlockSource& source,
@@ -985,7 +1006,7 @@ LL_TYPE_INSTANCE_HOOK(BSCDispatcherRenderHook,ll::memory::HookPriority::Normal,
     recordDispatchedActor(*this,component);
 }
 bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
-bool installedWorld{},installedDispatch{},installedChest{},installedSign{},
+bool installedWorld{},installedDispatch{},installedImplicitDispatch{},installedChest{},installedSign{},
      installedHanging{},installedPiston{},installedPot{};
 }
 void installActorRenderHooks(ll::mod::NativeMod& mod){
@@ -998,8 +1019,10 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
         if(installed)logger.info("BlockEntity hook OK: {}",label);
         else logger.warn("BlockEntity hook FAILED: {}, hook_status={}",label,status);
     };
-    install("BlockActorRenderDispatcher::render",installedDispatch,
+    install("BlockActorRenderDispatcher::render(explicit position)",installedDispatch,
         []{return BSCDispatcherRenderHook::hook();});
+    install("BlockActorRenderDispatcher::render(implicit position)",installedImplicitDispatch,
+        []{return BSCDispatcherImplicitRenderHook::hook();});
     install("ChestRenderer::render",installedChest,
         []{return BSCChestModelHook::hook();});
     install("SignRenderer::render",installedSign,
@@ -1027,9 +1050,9 @@ bool installActorWireframeObservations(ll::mod::NativeMod& mod){
     // renderer hooks; do not hook native constructor/destructor lifetimes.
     installActorRenderHooks(mod);
     bool const partHook=installActorWireframePartHook(mod);
-    if(!partHook && installedDispatch)
+    if(!partHook && (installedDispatch || installedImplicitDispatch))
         mod.getLogger().warn("F7/F6: ModelPart render hooks unavailable; dispatcher capture still active");
-    return installedDispatch || partHook;
+    return installedDispatch || installedImplicitDispatch || partHook;
 }
 bool installNativeObservations(ll::mod::NativeMod& mod){
     if(installedWorld)return true;
@@ -1055,8 +1078,8 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         []{return BSCPartLoadBoxesHook::hook();});
     install("ModelPart::compileCubes",installedPartCompile,
         []{return BSCPartCompileCubesHook::hook();});
-    logger.info("F6 native hooks initialized: world={}, dispatcher={}, direct_actor_hooks={}/5, source_box_hooks={}/3",
-        installedWorld,installedDispatch,
+    logger.info("F6 native hooks initialized: world={}, dispatcher_explicit={}, dispatcher_implicit={}, direct_actor_hooks={}/5, source_box_hooks={}/3",
+        installedWorld,installedDispatch,installedImplicitDispatch,
         static_cast<int>(installedChest)+static_cast<int>(installedSign)+
         static_cast<int>(installedHanging)+static_cast<int>(installedPiston)+
         static_cast<int>(installedPot),
@@ -1090,7 +1113,9 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
     ActorCaptureDiagnostics diagnostics;
     diagnostics.hooksInstalled={installedChest,installedSign,installedHanging,
                                 false,false,false,installedPiston};
-    diagnostics.dispatcherHook=installedDispatch;
+    diagnostics.dispatcherHook=installedDispatch || installedImplicitDispatch;
+    diagnostics.explicitDispatcherHook=installedDispatch;
+    diagnostics.implicitDispatcherHook=installedImplicitDispatch;
     diagnostics.observedRendererMask=observedRendererMask.load(std::memory_order_relaxed);
     std::lock_guard lock(mutex);
     diagnostics.capturedModels=recordedActorLabels.size();
@@ -1164,6 +1189,9 @@ void uninstallNativeObservations(){
     {std::lock_guard lock(sourceBoxesMutex);sourceBoxes.clear();}
     if(installedPot){BSCPotWireHook::unhook();installedPot=false;}
     if(installedDispatch){BSCDispatcherRenderHook::unhook();installedDispatch=false;}
+    if(installedImplicitDispatch){
+        BSCDispatcherImplicitRenderHook::unhook();installedImplicitDispatch=false;
+    }
     if(installedPiston){BSCPistonArmModelHook::unhook();installedPiston=false;}
     if(installedHanging){BSCHangingSignModelHook::unhook();installedHanging=false;}
     if(installedSign){BSCSignModelHook::unhook();installedSign=false;}

@@ -1,4 +1,5 @@
 #include "Library.h"
+#include "RendererAudit.h"
 #include "TargetVersion.h"
 #include "GeometryPool.h"
 #include "PoolV3.h"
@@ -634,7 +635,19 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"distinct_shapes\":" << data.nativeCounters.distinctShapes << '}'
                  << ",\"capture_cycle_finished\":" << (!data.cancelled?"true":"false")
                  << ",\"registry_only\":true,\"passive_world_observation\":" << (!data.definitionOnly?"true":"false")
-                  << ",\"captured_block_actor_models\":" << data.actorModels.size()
+                  << ",\"block_actor_renderer_audit\":{\"observed_mask\":" << data.observedActorRendererMask
+                 << ",\"id_count\":" << RendererAudit.size()
+                 << ",\"entries\":[";
+        for(std::size_t index=0;index<RendererAudit.size();++index){
+            if(index)manifest<<',';
+            auto const& entry=RendererAudit[index];
+            manifest<<"{\"id\":"<<index<<",\"name\":"<<quoted(std::string(entry.name))
+                    <<",\"path\":"<<quoted(std::string(entry.capturePath))
+                    <<",\"observed\":"
+                    <<((data.observedActorRendererMask&(std::uint32_t{1}<<index))?"true":"false")<<'}';
+        }
+        manifest<<"]}"
+                 << ",\"captured_block_actor_models\":" << data.actorModels.size()
                   << ",\"definitions_only\":" << (data.definitionOnly?"true":"false")
                  << ",\"cancelled\":" << (data.cancelled?"true":"false")
                  << ",\"complete\":false}\n";
