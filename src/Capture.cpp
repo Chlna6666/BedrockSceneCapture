@@ -254,6 +254,17 @@ void finish(bool cancelled) {
         sceneStatus.rejectedDuplicate,sceneStatus.rejectedLockBusy,
         sceneStatus.distinctBlockStates,sceneStatus.distinctShapes
     };
+    gSession->library.nativeShapeCoverage.reserve(sceneStatus.shapeSamples.size());
+    for(auto const& sample:sceneStatus.shapeSamples){
+        gSession->library.nativeShapeCoverage.push_back(NativeShapeCoverage{
+            sample.shape,sample.acceptedMeshes,sample.missingUvMeshes
+        });
+        auto const audit=auditBlockShape(sample.shape);
+        if(audit.name!="other")
+            log().info("F6 shape {} {}: native_meshes={}, missing_uv={}, path={}",
+                       sample.shape,audit.name,sample.acceptedMeshes,
+                       sample.missingUvMeshes,audit.renderPath);
+    }
     auto actorStatus=actorCaptureDiagnostics();
     log().info("F6 BlockActor hooks: dispatcher={}, chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
                actorStatus.dispatcherHook,actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
@@ -555,6 +566,20 @@ void registerStates(Session& s,Clock::time_point started) {
                entry.actorModelKeys.empty())
                 entry.actorModelKeys={"piston_arm"};
             switch(gfx->mBlockShape){
+            case BlockShape::Torch:
+                entry.geometryContext="torch_mount_and_native_uv";break;
+            case BlockShape::Lantern:
+                entry.geometryContext="lantern_hanging_and_native_uv";break;
+            case BlockShape::EndRod:
+                entry.geometryContext="end_rod_axis_and_native_uv";break;
+            case BlockShape::LightningRod:
+                entry.geometryContext="lightning_rod_axis_and_native_uv";break;
+            case BlockShape::Candle:
+                entry.geometryContext="candle_count_and_flame_native_uv";break;
+            case BlockShape::Piston:
+                entry.geometryContext="piston_state_head_and_moving_arm";break;
+            case BlockShape::BlockActorRendererOnly:
+                entry.geometryContext="block_actor_renderer_only";break;
             case BlockShape::Water:
             case BlockShape::BubbleColumn:
                 entry.geometryContext="fluid_neighbors";break;

@@ -19,6 +19,10 @@ struct ActorModelSnapshot {
     std::string name;
     std::string geometryJson;
 };
+struct NativeShapeSample {
+    int shape{};
+    std::size_t acceptedMeshes{},missingUvMeshes{};
+};
 struct NativeSceneDiagnostics {
     std::uint64_t tessellatorCalls{};
     std::uint64_t eligibleCalls{};
@@ -26,6 +30,7 @@ struct NativeSceneDiagnostics {
     std::uint64_t rejectedQuota{},rejectedDuplicate{},rejectedLockBusy{};
     std::size_t distinctBlockStates{};
     std::size_t distinctShapes{};
+    std::vector<NativeShapeSample> shapeSamples;
 };
 NativeSceneDiagnostics nativeSceneDiagnostics();
 // Recreate selected built-in CPU model definitions after source-box hooks are active.

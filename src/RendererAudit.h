@@ -41,4 +41,28 @@ inline constexpr std::array<RendererAuditEntry,28> RendererAudit{{
     {"Shelf","runtime_only"},
     {"CopperGolemStatue","cpu_model"}
 }};
+
+struct BlockShapeAuditEntry {
+    std::string_view name;
+    std::string_view renderPath;
+};
+// BlockShape is distinct from BlockActorRendererId. These specialized
+// tessellators are MCNAPI unless marked explicitly. The common
+// BlockTessellator::tessellateInWorld is MCAPI and already observed by F6.
+[[nodiscard]] constexpr BlockShapeAuditEntry auditBlockShape(int shape){
+    switch(shape){
+    case 2:return {"Torch","native_tessellator_mcnapi_subpath"};
+    case 4:return {"Water","native_tessellator_mcnapi_liquid"};
+    case 76:return {"Piston","tessellator_plus_block_actor"};
+    case 81:return {"EndRod","native_tessellator"};
+    case 105:return {"BubbleColumn","native_tessellator_mcapi_bubble"};
+    case 113:return {"Lantern","native_tessellator_mcnapi_subpath"};
+    case 125:return {"SculkSensor","native_tessellator_dynamic"};
+    case 127:return {"LightningRod","native_tessellator_mcnapi_subpath"};
+    case 136:return {"Candle","native_tessellator_mcnapi_subpath"};
+    case 145:return {"BlockActorRendererOnly","block_actor_dispatcher"};
+    case 158:return {"Shelf","tessellator_plus_block_actor"};
+    default:return {"other","native_tessellator"};
+    }
+}
 }

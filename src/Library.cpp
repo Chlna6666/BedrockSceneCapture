@@ -635,7 +635,19 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"distinct_shapes\":" << data.nativeCounters.distinctShapes << '}'
                  << ",\"capture_cycle_finished\":" << (!data.cancelled?"true":"false")
                  << ",\"registry_only\":true,\"passive_world_observation\":" << (!data.definitionOnly?"true":"false")
-                  << ",\"block_actor_renderer_audit\":{\"observed_mask\":" << data.observedActorRendererMask
+                  << ",\"native_block_shape_audit\":[";
+        for(std::size_t i=0;i<data.nativeShapeCoverage.size();++i){
+            if(i)manifest<<',';
+            auto const& shape=data.nativeShapeCoverage[i];
+            auto const audit=auditBlockShape(shape.shape);
+            manifest<<"{\"id\":"<<shape.shape
+                    <<",\"name\":"<<quoted(std::string(audit.name))
+                    <<",\"render_path\":"<<quoted(std::string(audit.renderPath))
+                    <<",\"accepted_meshes\":"<<shape.acceptedMeshes
+                    <<",\"missing_vertex_uv_meshes\":"<<shape.missingUvMeshes<<'}';
+        }
+        manifest<<"]"
+                 << ",\"block_actor_renderer_audit\":{\"observed_mask\":" << data.observedActorRendererMask
                  << ",\"id_count\":" << RendererAudit.size()
                  << ",\"entries\":[";
         for(std::size_t index=0;index<RendererAudit.size();++index){

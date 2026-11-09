@@ -71,6 +71,10 @@ namespace bsc {
 namespace {
 static_assert(RendererAudit.size()==static_cast<std::size_t>(BlockActorRendererId::Count),
               "Review every BlockActorRendererId after upgrading Bedrock SDK");
+static_assert(static_cast<int>(BlockShape::Count)==159 &&
+              static_cast<int>(BlockShape::Torch)==2 &&
+              static_cast<int>(BlockShape::Lantern)==113,
+              "Review BlockShape audit after Bedrock SDK upgrade");
 std::atomic_bool armed{false};
 // Bit i means the native dispatcher actually rendered renderer-id i during
 // this F6 recording. A registered renderer is NOT a captured UV model.
@@ -105,6 +109,7 @@ constexpr std::size_t MaxDistinctPerState=12;
 constexpr std::size_t MaxFullBoundsBlockSamples=768;
 std::size_t fullBoundsBlockSamples{};
 std::unordered_map<int,std::size_t> shapesObserved;
+std::unordered_map<int,std::size_t> shapesMissingUv;
 std::unordered_map<std::uint32_t,std::size_t> statesObserved;
 std::unordered_map<int,std::size_t> shapesRejected;
 std::atomic<std::uint64_t> tessellatorCalls{0};
@@ -707,6 +712,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     reconstructMissingNormals(mesh);
     recordedVertices+=mesh.vertices.size();
     ++shapesObserved[shape];
+    if(!mesh.uvValid)++shapesMissingUv[shape];
     ++statesObserved[block.mNetworkId];
     if(fullBoundsCandidate)++fullBoundsBlockSamples;
     acceptedCalls.fetch_add(1,std::memory_order_relaxed);
@@ -1108,6 +1114,13 @@ NativeSceneDiagnostics nativeSceneDiagnostics(){
     std::lock_guard lock(mutex);
     out.distinctBlockStates=statesObserved.size();
     out.distinctShapes=shapesObserved.size();
+    out.shapeSamples.reserve(shapesObserved.size());
+    for(auto const& [shape,count]:shapesObserved)
+        out.shapeSamples.push_back(NativeShapeSample{
+            shape,count,shapesMissingUv.contains(shape)?shapesMissingUv.at(shape):0
+        });
+    std::sort(out.shapeSamples.begin(),out.shapeSamples.end(),
+              [](auto const& a,auto const& b){return a.shape<b.shape;});
     return out;
 }
 ActorCaptureDiagnostics actorCaptureDiagnostics(){
@@ -1146,6 +1159,7 @@ void clearNativeObservations(){
     recordedVertices=0;
     fullBoundsBlockSamples=0;
     shapesObserved.clear();
+    shapesMissingUv.clear();
     statesObserved.clear();
     shapesRejected.clear();
     tessellatorCalls.store(0,std::memory_order_relaxed);

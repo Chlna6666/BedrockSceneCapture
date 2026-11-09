@@ -77,6 +77,10 @@ struct NativeCaptureCounters {
     std::uint64_t rejectedQuota{},rejectedDuplicate{},rejectedLockBusy{};
     std::uint64_t distinctBlockStates{},distinctShapes{};
 };
+struct NativeShapeCoverage {
+    int shape{};
+    std::uint64_t acceptedMeshes{},missingUvMeshes{};
+};
 struct LibraryData {
     std::filesystem::path directory;
     std::vector<BlockResource> blocks;
@@ -88,6 +92,7 @@ struct LibraryData {
     bool definitionOnly{};
     NativeCaptureCounters nativeCounters{};
     std::uint32_t observedActorRendererMask{};
+    std::vector<NativeShapeCoverage> nativeShapeCoverage;
 };
 bool saveLibrary(LibraryData const&, std::string& error);
 std::string hexBytes(std::string const&);
