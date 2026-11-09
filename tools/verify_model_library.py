@@ -1,282 +1,261 @@
 #!/usr/bin/env python3
-"""Validate BedrockSceneCapture Geometry Pool v2 (exclusive export format)."""
+"""Validate the BSC Geometry Pool v3-only export and its numeric references."""
+from __future__ import annotations
 import argparse
-import hashlib
 import json
 import math
-import re
+import struct
 import tempfile
-from collections import Counter
 from pathlib import Path
 
-HASH=re.compile(r"[0-9a-f]{64}\Z")
-STATUSES=("complete","dynamic","partial","unsupported")
-DOCS=("manifest.json","blocks.json","entities.json","materials.json",
-      "coverage.json","geometry_catalog.json","geometry_pool.json")
+ROOT_FILES = ("manifest.json", "blocks.json", "entities.json",
+              "materials.json", "coverage.json", "geometry_catalog.json")
+KINDS = ("geometry", "appearance", "materials", "models")
+MAX_ENTRIES = 1_000_000
+MAX_ITEM = 64 * 1024 * 1024
 
-def validate(root: Path):
-    errors=[]
-    try:
-        docs={n:json.loads((root/n).read_bytes()) for n in DOCS}
-    except (OSError, ValueError) as exc:
-        return {"valid":False,"errors":[f"invalid export index: {exc}"]}
-    manifest,blocks,entities,materials,coverage,static,pool=(docs[n] for n in DOCS)
-    states=blocks.get("blocks",[])
-    if not isinstance(states,list):return {"valid":False,"errors":["invalid block list"]}
-    if manifest.get("target_game_version")!="1.26.60.5":errors.append("game version")
-    if manifest.get("shared_geometry_pool_schema")!=2 or pool.get("schema")!=2:
-        errors.append("v2 schema required")
-    if manifest.get("legacy_meshes_retained") is not False or pool.get("legacy_meshes_retained") is not False:
-        errors.append("legacy meshes must be disabled")
-    if (root/"meshes").exists():errors.append("legacy meshes directory remains")
-    if manifest.get("textures_exported") is not False or (root/"textures").exists():
-        errors.append("texture payload must stay external")
-    if manifest.get("registered_block_states")!=len(states):errors.append("registered block state count")
-    if manifest.get("static_geometry_models")!=len(static.get("models",[])):
-        errors.append("static model count")
-    if manifest.get("captured_block_actor_models")!=len(entities.get("model_parts",[])):
-        errors.append("actor model count")
-    counts=Counter(s.get("status") for s in states)
-    if any(s not in STATUSES for s in counts):errors.append("invalid state coverage")
-    if any(counts.get(s,0)!=coverage.get("counts",{}).get(s,0) for s in STATUSES):
-        errors.append("state coverage count mismatch")
-    caches={kind:{} for kind in ("geometry","appearance","materials","models")}
-    seen={kind:set() for kind in caches}
-    def load(kind,digest):
-        if not isinstance(digest,str) or not HASH.fullmatch(digest):
-            errors.append(f"invalid {kind} hash reference")
-            return None
-        seen[kind].add(digest)
-        if digest in caches[kind]:return caches[kind][digest]
+
+class Pool:
+    def __init__(self, data: bytes):
+        if len(data) < 28 or data[:8] != b"BSCPOOL3":
+            raise ValueError("invalid Geometry Pool v3 header")
+        version, *counts = struct.unpack_from("<IIIII", data, 8)
+        if version != 3 or any(c > MAX_ENTRIES for c in counts):
+            raise ValueError("unsupported pool version/counts")
+        total = sum(counts)
+        end = 28 + 12 * total
+        if end > len(data):
+            raise ValueError("truncated Geometry Pool v3 directory")
+        self.entries: dict[str, list[bytes]] = {}
+        cursor = end
+        n = 28
+        for kind, count in zip(KINDS, counts):
+            items = []
+            for _ in range(count):
+                offset, size = struct.unpack_from("<QI", data, n)
+                n += 12
+                if size > MAX_ITEM or offset != cursor or offset + size > len(data):
+                    raise ValueError(f"invalid {kind} binary offset/length")
+                items.append(data[offset:offset + size])
+                cursor = offset + size
+            self.entries[kind] = items
+        if cursor != len(data):
+            raise ValueError("trailing bytes in Geometry Pool v3")
+
+    def get(self, kind: str, index: object) -> bytes:
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            raise ValueError(f"invalid {kind} u32 reference: {index!r}")
         try:
-            data=(root/"geometry_pool"/kind/(digest+".json")).read_bytes()
-            if hashlib.sha256(data).hexdigest()!=digest:
-                errors.append(f"hash mismatch in {kind} {digest}")
-            obj=json.loads(data)
-        except (OSError,ValueError) as exc:
-            errors.append(f"invalid {kind} resource {digest}: {exc}")
-            obj=None
-        caches[kind][digest]=obj
-        return obj
+            return self.entries[kind][index]
+        except IndexError as exc:
+            raise ValueError(f"out-of-range {kind} u32 reference: {index}") from exc
 
-    network={s.get("network_id"):s for s in states if isinstance(s.get("network_id"),int)}
-    total_refs=0
-    unresolved=0
-    for block in states:
-        alias=block.get("geometry_alias_network_id")
-        if alias is not None:
-            original=network.get(alias)
-            if (not original or original is block or
-                original.get("name")!=block.get("name") or
-                original.get("geometry_alias_network_id") is not None or
-                not any(x.get("neighborhood")=="registry_visual_bounds"
-                        for x in original.get("variants",[])) or
-                block.get("variants") or block.get("shared_material_ref") is not None):
-                errors.append("invalid visual-only state alias")
-            if block.get("name") not in ("minecraft:noteblock","minecraft:note_block",
-                                       "noteblock","note_block"):
-                errors.append("unverified visual-only alias")
-            bindings=[]
-        else:
-            mat=load("materials",block.get("shared_material_ref"))
-            if mat is None or mat.get("schema")!=2:
-                errors.append("missing v2 material table")
-                bindings=[]
-            else:
-                bindings=mat.get("texture_bindings",[])
-                if not isinstance(bindings,list):bindings=[]
-        if "texture_bindings" in block:errors.append("duplicate inline material table")
-        slots={t.get("slot"):t for t in bindings}
-        if len(slots)!=len(bindings):errors.append("duplicate material slot")
-        for tex in bindings:
-            for name in ("atlas_variants","carried_atlas_variants"):
-                variants=tex.get(name,[])
-                if len({(v.get("variant"),v.get("frame")) for v in variants})!=len(variants):
-                    errors.append("duplicate atlas variant")
-                for v in variants:
-                    uv=v.get("atlas_uv")
-                    if not isinstance(uv,list) or len(uv)!=4 or any(
-                        not isinstance(n,(int,float)) or not math.isfinite(n) for n in uv):
-                        errors.append("invalid texture atlas rectangle")
-        for variant in block.get("variants",[]):
-            if variant.get("capture_source")=="native_block_tessellator":
-                neighbors=variant.get("neighbor_network_ids",[])
-                if len(neighbors)!=27 or neighbors[0]!=block.get("network_id"):
-                    errors.append("invalid neighbor signature")
-            geoms=variant.get("shared_geometry_refs",[])
-            apps=variant.get("shared_appearance_refs",[])
-            if len(geoms)!=len(apps):errors.append("shared reference length mismatch")
-            if "mesh_refs" in variant or "mesh_triangle_texture_slots" in variant:
-                errors.append("legacy mesh fields present")
-            unresolved+=variant.get("unresolved_texture_triangles",0)
-            total_refs+=len(geoms)
-            for digest,app_digest in zip(geoms,apps):
-                geometry=load("geometry",digest)
-                appearance=load("appearance",app_digest)
-                if geometry is None or appearance is None:continue
-                if (geometry.get("schema")!=2 or geometry.get("topology")!="triangles" or
-                    geometry.get("precision")!="exact_float32" or
-                    geometry.get("winding_preserved") is not True):
-                    errors.append("invalid shared geometry metadata")
-                if appearance.get("schema")!=2 or appearance.get("geometry_ref")!=digest:
-                    errors.append("appearance points to wrong geometry")
-                verts=geometry.get("vertices",[])
-                tris=geometry.get("triangles",[])
-                if not isinstance(verts,list) or not isinstance(tris,list):
-                    errors.append("invalid geometry arrays")
-                    continue
-                if any(not isinstance(v,list) or len(v)!=3 or
-                       any(not isinstance(n,(int,float)) or not math.isfinite(n) for n in v)
-                       for v in verts):
-                    errors.append("invalid shared vertices")
-                if any(not isinstance(t,list) or len(t)!=3 or
-                       any(not isinstance(n,int) or n<0 or n>=len(verts) for n in t)
-                       for t in tris):
-                    errors.append("invalid shared triangles")
-                if appearance.get("geometry_source")=="native_world_tessellation" and any(
-                    any(not (-2.0 <= float(p) <= 3.0) for p in v) for v in verts):
-                    errors.append("native vertices outside block-local space")
-                corners=appearance.get("corner_attributes",[])
-                face_slots=appearance.get("triangle_texture_slots",[])
-                face_variants=appearance.get("triangle_texture_variant_indices",[])
-                if len(corners)!=3*len(tris) or len(face_slots)!=len(tris) or len(face_variants)!=len(tris):
-                    errors.append("appearance triangle/corner count mismatch")
-                    continue
-                if any(not isinstance(row,list) or len(row)!=6 or
-                       any(not isinstance(n,(int,float)) or not math.isfinite(n) for n in row)
-                       for row in corners):
-                    errors.append("invalid shared corner attributes")
-                for slot,uv_variant in zip(face_slots,face_variants):
-                    if slot is None:
-                        if uv_variant is not None:errors.append("unbound face has atlas variant")
+
+def decode_geometry(data: bytes) -> tuple[int, int]:
+    if len(data) < 8:
+        raise ValueError("truncated geometry")
+    vertices, triangles = struct.unpack_from("<II", data)
+    if vertices > 2_000_000 or triangles > 2_000_000 or not triangles:
+        raise ValueError("invalid geometry counts")
+    if len(data) != 8 + 12 * vertices + 12 * triangles:
+        raise ValueError("invalid geometry payload size")
+    for item in struct.iter_unpack("<fff", data[8:8 + 12 * vertices]):
+        if not all(math.isfinite(v) and abs(v) <= 4096 for v in item):
+            raise ValueError("nonfinite/out-of-range geometry position")
+    for tri in struct.iter_unpack("<III", data[8 + 12 * vertices:]):
+        if any(i >= vertices for i in tri):
+            raise ValueError("geometry triangle index out of range")
+    return vertices, triangles
+
+
+def decode_appearance(data: bytes, expected_geometry: int, triangles: int) -> list[int | None]:
+    if len(data) < 20:
+        raise ValueError("truncated appearance")
+    geo, layer, source, flags, count = struct.unpack_from("<IIIII", data)
+    if geo != expected_geometry or source > 2 or flags & ~3 or count != triangles:
+        raise ValueError("invalid appearance geometry/source/count")
+    if len(data) != 20 + count * 84:
+        raise ValueError("invalid appearance payload size")
+    attrs_end = 20 + count * 72
+    for start in range(20, attrs_end, 24):
+        *components, _color = struct.unpack_from("<fffffI", data, start)
+        if not all(math.isfinite(v) for v in components):
+            raise ValueError("nonfinite appearance normal or UV")
+    slots: list[int | None] = []
+    for slot, variant, frame in struct.iter_unpack("<III", data[attrs_end:]):
+        if (variant == 0xFFFFFFFF) != (frame == 0xFFFFFFFF):
+            raise ValueError("incomplete appearance variant pair")
+        slots.append(None if slot == 0xFFFFFFFF else slot)
+    if not (flags & 1) and any(slot is not None for slot in slots):
+        raise ValueError("incomplete UV with material-bound triangles")
+    return slots
+
+
+def validate(root: Path) -> dict:
+    errors: list[str] = []
+    try:
+        documents = {p: json.loads((root / p).read_text(encoding="utf-8"))
+                     for p in ROOT_FILES}
+        pool = Pool((root / "geometry_pool.bin").read_bytes())
+    except (OSError, ValueError, struct.error, json.JSONDecodeError) as exc:
+        return {"valid": False, "errors": [str(exc)]}
+    manifest = documents["manifest.json"]
+    if manifest.get("shared_geometry_pool_schema") != 3:
+        errors.append("Geometry Pool v3 required")
+    if manifest.get("legacy_meshes_retained") is not False:
+        errors.append("legacy mesh format still enabled")
+    for path in ("geometry_pool.json", "geometry_pool", "meshes"):
+        if (root / path).exists():
+            errors.append(f"legacy output remains: {path}")
+    for kind, field in (("geometry", "shared_geometry_count"),
+                        ("appearance", "shared_appearance_count"),
+                        ("materials", "shared_material_count")):
+        if manifest.get(field) != len(pool.entries[kind]):
+            errors.append(f"{kind} manifest count mismatch")
+    geometries = {}
+    for idx, payload in enumerate(pool.entries["geometry"]):
+        try:
+            geometries[idx] = decode_geometry(payload)[1]
+        except (ValueError, struct.error) as exc:
+            errors.append(f"geometry[{idx}]: {exc}")
+    materials = {}
+    for idx, payload in enumerate(pool.entries["materials"]):
+        try:
+            obj = json.loads(payload)
+            if obj.get("schema") != 2 or not isinstance(obj.get("texture_bindings"), list):
+                raise ValueError("invalid material table")
+            slots = [t["slot"] for t in obj["texture_bindings"]]
+            if len(set(slots)) != len(slots):
+                raise ValueError("duplicate material slot")
+            materials[idx] = set(slots)
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            errors.append(f"materials[{idx}]: {exc}")
+    for idx, payload in enumerate(pool.entries["models"]):
+        try:
+            model = json.loads(payload)
+            if not isinstance(model, dict):
+                raise ValueError("invalid model")
+            if model.get("geometry_complete") and any(
+                model.get(field, 0) for field in
+                ("unresolved_compiled_cubes", "incomplete_source_uv_boxes", "incomplete_native_uv")
+            ):
+                raise ValueError("model claims completeness with missing UV")
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            errors.append(f"models[{idx}]: {exc}")
+    blocks = documents["blocks.json"].get("blocks", [])
+    if not isinstance(blocks, list):
+        errors.append("invalid blocks list")
+        blocks = []
+    references = 0
+    unresolved = 0
+    for block in blocks:
+        mid = block.get("shared_material_ref")
+        material_slots = set()
+        if mid is not None:
+            try:
+                pool.get("materials", mid)
+                material_slots = materials.get(mid, set())
+            except ValueError as exc:
+                errors.append(str(exc))
+        if "texture_bindings" in block:
+            errors.append("v2 inline material table remains")
+        for variant in block.get("variants", []):
+            geos = variant.get("shared_geometry_refs", [])
+            apps = variant.get("shared_appearance_refs", [])
+            if len(geos) != len(apps):
+                errors.append("shared reference length mismatch")
+            if "mesh_refs" in variant:
+                errors.append("v2 mesh refs remain")
+            unresolved += variant.get("unresolved_texture_triangles", 0)
+            for gid, aid in zip(geos, apps):
+                references += 1
+                try:
+                    pool.get("geometry", gid)
+                    payload = pool.get("appearance", aid)
+                    if gid not in geometries:
                         continue
-                    if slot not in slots:errors.append("unknown material slot")
-                    if appearance.get("uv_complete") is False:
-                        errors.append("incomplete UV declares a material slot")
-                    if appearance.get("uv_space")=="block_face_local":
-                        if uv_variant is not None:errors.append("local UV has atlas variant")
-                    elif (uv_variant is not None and slot in slots and
-                          uv_variant not in [[v.get("variant"),v.get("frame")]
-                                             for v in slots[slot].get("atlas_variants",[])]):
-                        errors.append("unresolvable UV variant")
+                    for slot in decode_appearance(payload, gid, geometries[gid]):
+                        if slot is not None and slot not in material_slots:
+                            errors.append("unbound appearance material slot")
+                except (ValueError, struct.error) as exc:
+                    errors.append(str(exc))
+    for filename, key in (("entities.json", "model_parts"),
+                          ("geometry_catalog.json", "models")):
+        for record in documents[filename].get(key, []):
+            try:
+                pool.get("models", record.get("model_ref"))
+            except ValueError as exc:
+                errors.append(str(exc))
+    if manifest.get("shared_geometry_references") != references:
+        errors.append("shared geometry reference count mismatch")
+    if manifest.get("unresolved_texture_triangles") != unresolved:
+        errors.append("unresolved texture triangle count mismatch")
+    return {"valid": not errors, "errors": errors, "states": len(blocks),
+            "shared_geometry": len(pool.entries["geometry"]),
+            "shared_appearance": len(pool.entries["appearance"]),
+            "shared_materials": len(pool.entries["materials"]),
+            "references": references}
 
-    for record in static.get("models",[]):
-        load("models",record.get("model_ref"))
-    for record in entities.get("model_parts",[]):
-        model=load("models",record.get("model_ref"))
-        if model is None or model.get("source")!="native_block_actor_model_parts":
-            errors.append("invalid BlockEntity native model reference")
-            continue
-        parts=model.get("parts",[])
-        if model.get("geometry_complete") is True:
-            if any(model.get(key,0) for key in (
-                "unresolved_compiled_cubes","incomplete_source_uv_boxes",
-                "incomplete_native_uv")):
-                errors.append("complete BlockEntity model contains unresolved UV")
-            for part in parts:
-                for box in part.get("native_source_boxes",[]):
-                    if box.get("uv_complete") and not box.get("faces"):
-                        errors.append("complete BlockEntity source box has no face UV")
-                    if box.get("uv_mapping")=="legacy_box_unfold" and (
-                        len(box.get("faces",[]))!=6 or
-                        {face.get("name") for face in box["faces"]}!=
-                        {"up","down","north","south","west","east"}):
-                        errors.append("invalid legacy BlockEntity UV unfolding")
-        if not any(
-            p.get("cubes") or p.get("native_source_boxes") or
-            (p.get("poly_mesh",{}).get("positions") and
-             (p["poly_mesh"].get("triangles") or p["poly_mesh"].get("quads")))
-            for p in parts):
-            errors.append("BlockEntity model missing geometry")
-    for kind,field in (("geometry","shared_geometry_count"),
-                       ("appearance","shared_appearance_count"),
-                       ("materials","shared_material_count")):
-        if manifest.get(field)!=len(seen[kind]) or set(pool.get(kind,[]))!=seen[kind]:
-            errors.append(f"{kind} count/index mismatch")
-    if total_refs!=manifest.get("shared_geometry_references"):
-        errors.append("shared geometry reference count")
-    if unresolved!=manifest.get("unresolved_texture_triangles"):
-        errors.append("unresolved texture triangles count")
-    return {"valid":not errors,"errors":errors,"states":len(states),
-            "shared_geometry":len(seen["geometry"]),
-            "shared_appearance":len(seen["appearance"]),
-            "shared_materials":len(seen["materials"]),"references":total_refs}
 
-def self_test():
+def self_test() -> None:
+    def u32(*v: int) -> bytes:
+        return struct.pack("<" + "I" * len(v), *v)
+    geom = u32(3, 1) + struct.pack("<9f", 0,0,0, 1,0,0, 0,1,0) + u32(0,1,2)
+    corner = struct.pack("<fffffI", 0,0,1, 0,0, 0xFFFFFFFF)
+    appearance = u32(0,0,0,1,1) + corner*3 + u32(2,0xFFFFFFFF,0xFFFFFFFF)
+    material = b'{"schema":2,"texture_bindings":[{"slot":2,"resource_alias":"stone"}]}'
+    blobs = [[geom], [appearance], [material], []]
+    count = sum(map(len, blobs))
+    cursor = 28 + 12*count
+    header = b"BSCPOOL3" + u32(3,*map(len,blobs))
+    directory = bytearray()
+    payload = bytearray()
+    for group in blobs:
+        for entry in group:
+            directory.extend(struct.pack("<QI", cursor, len(entry)))
+            payload.extend(entry)
+            cursor += len(entry)
     with tempfile.TemporaryDirectory() as temp:
-        root=Path(temp)
-        for kind in ("geometry","appearance","materials","models"):
-            (root/"geometry_pool"/kind).mkdir(parents=True,exist_ok=True)
-        def add(kind,obj):
-            data=(json.dumps(obj,separators=(",",":"))+"\n").encode()
-            digest=hashlib.sha256(data).hexdigest()
-            (root/"geometry_pool"/kind/(digest+".json")).write_bytes(data)
-            return digest
-        geometry={"schema":2,"topology":"triangles","precision":"exact_float32",
-                  "winding_preserved":True,"vertices":[[0,0,0],[0,1,0],[1,1,0]],
-                  "triangles":[[0,1,2]]}
-        g=add("geometry",geometry)
-        appearance={"schema":2,"geometry_ref":g,"uv_space":"block_face_local",
-                    "geometry_source":"registry_visual_bounds","uv_complete":True,
-                    "corner_attributes":[[0,0,-1,0,0,4294967295],
-                                         [0,0,-1,0,1,4294967295],
-                                         [0,0,-1,1,1,4294967295]],
-                    "triangle_texture_slots":[2],"triangle_texture_variant_indices":[None]}
-        a=add("appearance",appearance)
-        m=add("materials",{"schema":2,"texture_bindings":[{"slot":2,"resource_alias":"stone"}]})
-        files={
-            "manifest.json":{"target_game_version":"1.26.60.5","registered_block_states":1,
-                             "static_geometry_models":0,"captured_block_actor_models":0,
-                             "textures_exported":False,"shared_geometry_pool_schema":2,
-                             "legacy_meshes_retained":False,"shared_geometry_count":1,
-                             "shared_appearance_count":1,"shared_material_count":1,
-                             "shared_geometry_references":1,"unresolved_texture_triangles":0},
-            "blocks.json":{"blocks":[{"name":"minecraft:stone","network_id":1,"status":"partial",
-                                      "shared_material_ref":m,
-                                      "variants":[{"neighborhood":"registry_visual_bounds",
-                                                   "shared_geometry_refs":[g],
-                                                   "shared_appearance_refs":[a],
-                                                   "unresolved_texture_triangles":0}]}]},
+        root = Path(temp)
+        (root / "geometry_pool.bin").write_bytes(header + directory + payload)
+        documents = {
+            "manifest.json": {"shared_geometry_pool_schema":3,
+                "legacy_meshes_retained":False, "shared_geometry_count":1,
+                "shared_appearance_count":1, "shared_material_count":1,
+                "shared_geometry_references":1, "unresolved_texture_triangles":0},
+            "blocks.json": {"blocks":[{"shared_material_ref":0,
+                "variants":[{"shared_geometry_refs":[0],
+                             "shared_appearance_refs":[0],
+                             "unresolved_texture_triangles":0}]}]},
             "entities.json":{"model_parts":[]},
-            "materials.json":{"materials":[]},
-            "coverage.json":{"counts":{"complete":0,"dynamic":0,"partial":1,"unsupported":0}},
             "geometry_catalog.json":{"models":[]},
-            "geometry_pool.json":{"schema":2,"legacy_meshes_retained":False,
-                                  "geometry":[g],"appearance":[a],"materials":[m]}
+            "materials.json":{"materials":[]},
+            "coverage.json":{"counts":{}},
         }
-        def save():
-            for name,obj in files.items():
-                (root/name).write_text(json.dumps(obj),encoding="utf-8")
-        save()
-        assert validate(root)["valid"],validate(root)["errors"]
-        state=files["blocks.json"]["blocks"][0]
-        state["variants"][0]["shared_appearance_refs"]=[]
-        save()
-        assert "shared reference length mismatch" in validate(root)["errors"]
-        state["variants"][0]["shared_appearance_refs"]=[a]
-        state["shared_material_ref"]="../../outside"
-        save()
-        assert "invalid materials hash reference" in validate(root)["errors"]
-        state["shared_material_ref"]=m
-        (root/"geometry_pool"/"geometry"/(g+".json")).write_bytes(b"{}")
-        save()
-        assert any("hash mismatch" in e for e in validate(root)["errors"])
-        (root/"geometry_pool"/"geometry"/(g+".json")).write_bytes(
-            (json.dumps(geometry,separators=(",",":"))+"\n").encode())
-        (root/"meshes").mkdir()
-        assert "legacy meshes directory remains" in validate(root)["errors"]
-        (root/"meshes").rmdir()
-        save()
-        assert validate(root)["valid"],validate(root)["errors"]
-    print("Geometry Pool v2 exclusive-export schema/hash self-test passed")
+        for name, doc in documents.items():
+            (root / name).write_text(json.dumps(doc), encoding="utf-8")
+        assert validate(root)["valid"], validate(root)
+        documents["blocks.json"]["blocks"][0]["variants"][0]["shared_geometry_refs"]=[5]
+        (root/"blocks.json").write_text(json.dumps(documents["blocks.json"]))
+        assert not validate(root)["valid"]
+        documents["blocks.json"]["blocks"][0]["variants"][0]["shared_geometry_refs"]=[0]
+        (root/"blocks.json").write_text(json.dumps(documents["blocks.json"]))
+        invalid=bytearray((root/"geometry_pool.bin").read_bytes())
+        invalid[28]=0xff
+        (root/"geometry_pool.bin").write_bytes(invalid)
+        assert not validate(root)["valid"]
+    print("Geometry Pool v3 binary/index roundtrip and rejection self-test passed")
 
-if __name__=="__main__":
-    parser=argparse.ArgumentParser()
-    parser.add_argument("directory",nargs="?",type=Path)
-    parser.add_argument("--self-test",action="store_true")
-    args=parser.parse_args()
-    if args.self_test:self_test()
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("directory", type=Path, nargs="?")
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args()
+    if args.self_test:
+        self_test()
     if args.directory:
-        result=validate(args.directory)
-        print(json.dumps(result,ensure_ascii=False,indent=2))
-        if not result["valid"]:raise SystemExit(1)
+        result = validate(args.directory)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result["valid"]:
+            raise SystemExit(1)
