@@ -1,4 +1,5 @@
 #include "MeshUtils.h"
+#include "ll/api/memory/Symbol.h"
 #include "NativeCoordinates.h"
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
@@ -22,8 +23,12 @@ void captureMesh(BlockSource& region,BlockTessellator& blocks,Tessellator& tess,
     // otherwise double tessellation would corrupt winding and UVs.
     if(raw.mPositions.get().empty()){
         auto const* graphics=BlockGraphics::getForBlock(block);
-        if(graphics && graphics->mBlockShape==BlockShape::Water)
-            blocks.tessellateLiquidInWorld(tess,block,pos);
+        if(graphics && graphics->mBlockShape==BlockShape::Water){
+            using LiquidFn=bool (*)(BlockTessellator*,Tessellator&,Block const&,BlockPos const&);
+            static auto liquid=reinterpret_cast<LiquidFn>(
+                ll::memory::SymbolView{"?tessellateLiquidInWorld@BlockTessellator@@QEAA_NAEAVTessellator@@AEBVBlock@@AEBVBlockPos@@@Z"}.resolve(true));
+            if(liquid)(void)liquid(&blocks,tess,block,pos);
+        }
         else if(!ok && block.getTypeName()=="minecraft:bubble_column")
             blocks.tessellateBubbleColumnInWorld(tess,block,pos);
     }

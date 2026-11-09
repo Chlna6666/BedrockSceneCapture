@@ -249,7 +249,7 @@ struct PartPositionScope {
     ~PartPositionScope(){--gPartRenderAtPositionDepth;}
 };
 LL_TYPE_INSTANCE_HOOK(BSCActorPartWireHook,ll::memory::HookPriority::Normal,
-    ModelPart,&ModelPart::render,void,
+    ModelPart,ll::memory::SymbolView{"?render@ModelPart@@QEAAXAEAVScreenContext@@AEAVModel@@M_NIVMatrix@@@Z"},void,
     ScreenContext& screen,Model& model,float scale,bool hideParentBodyPart,
     uint count,Matrix boneToEntitySpaceMatrix){
     // The renderer has already configured the bone pose. Capture while the
@@ -262,7 +262,7 @@ LL_TYPE_INSTANCE_HOOK(BSCActorPartWireHook,ll::memory::HookPriority::Normal,
 // never calling ModelPart::render. Observe the same native part while its
 // caller's world matrix is still valid. Validation discards bad transforms.
 LL_TYPE_INSTANCE_HOOK(BSCActorPartAtPositionWireHook,ll::memory::HookPriority::Normal,
-    ModelPart,&ModelPart::renderAtPosition,void,
+    ModelPart,ll::memory::SymbolView{"?renderAtPosition@ModelPart@@QEAAXAEAVScreenContext@@AEAVModel@@AEBVVec3@@M_NIVMatrix@@@Z"},void,
     ScreenContext& screen,Model& model,Vec3 const& position,float scale,
     bool hideParentBodyPart,uint count,Matrix boneToEntitySpaceMatrix){
     observePart(*this,screen,scale,boneToEntitySpaceMatrix);

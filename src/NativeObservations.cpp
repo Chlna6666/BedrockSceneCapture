@@ -568,7 +568,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
 // Capture at construction time: numerous BlockActor models retain only a
 // compiled render mesh by the time the F8 observation begins.
 LL_TYPE_INSTANCE_HOOK(BSCPartAddBoxHook,ll::memory::HookPriority::Normal,
-    ModelPart,&ModelPart::addBox,void,
+    ModelPart,ll::memory::SymbolView{"?addBox@ModelPart@@QEAAXAEBVVec3@@0_NMAEBVColor@mce@@@Z"},void,
     Vec3 const& originPos,Vec3 const& extents,bool mirror,float inflate,
     mce::Color const& color) {
     origin(originPos,extents,mirror,inflate,color);
@@ -673,7 +673,7 @@ LL_TYPE_INSTANCE_HOOK(BSCPartCompileCubesHook,ll::memory::HookPriority::Normal,
     origin(tess);
 }
 LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
-    ModelPart,&ModelPart::loadBoxes,void,
+    ModelPart,ll::memory::SymbolView{"?loadBoxes@ModelPart@@QEAAXAEBVVec3@@0AEBV?$vector@UBox@Geometry@@V?$allocator@UBox@Geometry@@@std@@@std@@0@Z"},void,
     Vec3 const& pivot,Vec3 const& offset,
     std::vector<Geometry::Box> const& boxes,Vec3 const& bindRotation) {
     origin(pivot,offset,boxes,bindRotation);
@@ -798,7 +798,7 @@ LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
          &model.mChainR1.get(),&model.mChainR2.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCBedModelHook,ll::memory::HookPriority::Normal,
-    BedRenderer,&BedRenderer::$render,void,
+    BedRenderer,ll::memory::SymbolView{"?$render@BedRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
@@ -807,7 +807,7 @@ LL_TYPE_INSTANCE_HOOK(BSCBedModelHook,ll::memory::HookPriority::Normal,
         &model.mLeg1.get(),&model.mLeg2.get(),&model.mLeg3.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCShulkerModelHook,ll::memory::HookPriority::Normal,
-    ShulkerBoxRenderer,&ShulkerBoxRenderer::$render,void,
+    ShulkerBoxRenderer,ll::memory::SymbolView{"?$render@ShulkerBoxRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
@@ -815,7 +815,7 @@ LL_TYPE_INSTANCE_HOOK(BSCShulkerModelHook,ll::memory::HookPriority::Normal,
     recordActor("shulker_box",model,{&model.mLid.get(),&model.mBase.get()});
 }
 LL_TYPE_INSTANCE_HOOK(BSCBellModelHook,ll::memory::HookPriority::Normal,
-    BellBlockActorRenderer,&BellBlockActorRenderer::$render,void,
+    BellBlockActorRenderer,ll::memory::SymbolView{"?$render@BellBlockActorRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data) {
     ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
@@ -836,7 +836,7 @@ LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
 // These share the live ModelPart observer; they do not claim export of
 // geometry for which the SDK exposes only opaque GPU buffers.
 LL_TYPE_INSTANCE_HOOK(BSCBannerWireHook,ll::memory::HookPriority::Normal,
-    BannerRenderer,&BannerRenderer::$render,void,
+    BannerRenderer,ll::memory::SymbolView{"?$render@BannerRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
@@ -848,25 +848,25 @@ LL_TYPE_INSTANCE_HOOK(BSCPotWireHook,ll::memory::HookPriority::Normal,
     origin(ctx,data);
 }
 LL_TYPE_INSTANCE_HOOK(BSCConduitWireHook,ll::memory::HookPriority::Normal,
-    ConduitRenderer,&ConduitRenderer::$render,void,
+    ConduitRenderer,ll::memory::SymbolView{"?$render@ConduitRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
 }
 LL_TYPE_INSTANCE_HOOK(BSCLecternWireHook,ll::memory::HookPriority::Normal,
-    LecternRenderer,&LecternRenderer::$render,void,
+    LecternRenderer,ll::memory::SymbolView{"?$render@LecternRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
 }
 LL_TYPE_INSTANCE_HOOK(BSCEnchantingBookWireHook,ll::memory::HookPriority::Normal,
-    EnchantingTableRenderer,&EnchantingTableRenderer::$render,void,
+    EnchantingTableRenderer,ll::memory::SymbolView{"?$render@EnchantingTableRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
 }
 LL_TYPE_INSTANCE_HOOK(BSCBeaconWireHook,ll::memory::HookPriority::Normal,
-    BeaconRenderer,&BeaconRenderer::$render,void,
+    BeaconRenderer,ll::memory::SymbolView{"?$render@BeaconRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
@@ -875,7 +875,7 @@ LL_TYPE_INSTANCE_HOOK(BSCBeaconWireHook,ll::memory::HookPriority::Normal,
 // golem statues) via the shared base renderer, not by assuming their visual
 // model can be recovered from the ordinary BlockTessellator.
 LL_TYPE_INSTANCE_HOOK(BSCSerializedActorWireHook,ll::memory::HookPriority::Normal,
-    SerializedActorRenderer,&SerializedActorRenderer::$render,void,
+    SerializedActorRenderer,ll::memory::SymbolView{"?$render@SerializedActorRenderer@@QEAAXAEAVBaseActorRenderContext@@AEAUBlockActorRenderData@@@Z"},void,
     BaseActorRenderContext& ctx,BlockActorRenderData& data){
     ActorWireframeScope scope{ctx,data};
     origin(ctx,data);
@@ -966,101 +966,14 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
     return installedWorld;
 }
 void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
-    // The renderer's models may already be compiled before F8 hooks exist.
-    // Recreate only native model classes with explicit zero-/scalar-argument
-    // SDK constructors. This is done once on the local game thread.
-    if(!armed.load(std::memory_order_acquire))return;
-    if(!installedPartAdd && !installedPartLoad){
-        mod.getLogger().warn("F8 model template reconstruction skipped: source box hooks unavailable");
-        return;
-    }
-    auto& logger=mod.getLogger();
-    auto discardCachedParts=[&](Model const& model,
-                                std::initializer_list<ModelPart const*> parts){
-        // Built-in temporary model constructors may register additional
-        // parts in mAllParts. Keeping their raw addresses in sourceBoxes lets
-        // later live models reuse a dangling pointer and inherit wrong boxes.
-        std::lock_guard lock(sourceBoxesMutex);
-        for(auto const* part:model.mAllParts.get())sourceBoxes.erase(part);
-        for(auto const* part:parts)sourceBoxes.erase(part);
-    };
-    auto logTemplate=[&](char const* name){
-        bool exists=false;
-        {
-            std::lock_guard lock(mutex);
-            exists=recordedActorLabels.contains(name);
-        }
-        if(exists)logger.info("F8 model template reconstructed: {}",name);
-        else logger.warn("F8 model template constructor yielded no usable geometry: {}",name);
-    };
-    try{
-        {
-            ChestModel model(false);
-            auto const& lid=model.mLid.get();
-            auto const& bottom=model.mBottom.get();
-            auto const& latch=model.mLock.get();
-            recordActor("chest_normal",model,{&lid,&bottom,&latch});
-            discardCachedParts(model,{&lid,&bottom,&latch});
-            logTemplate("chest_normal");
-        }
-        {
-            ChestModel model(true);
-            auto const& lid=model.mLid.get();
-            auto const& bottom=model.mBottom.get();
-            auto const& latch=model.mLock.get();
-            recordActor("chest_large",model,{&lid,&bottom,&latch});
-            discardCachedParts(model,{&lid,&bottom,&latch});
-            logTemplate("chest_large");
-        }
-        {
-            BellModel model;
-            auto const& body=model.mBellBody.get();
-            auto const& base=model.mBellBase.get();
-            recordActor("bell",model,{&body,&base});
-            discardCachedParts(model,{&body,&base});
-            logTemplate("bell");
-        }
-        {
-            PistonArmModel model;
-            auto const& base=model.mArmBase.get();
-            auto const& arm=model.mArm.get();
-            auto const& head=model.mFront.get();
-            recordActor("piston_arm",model,{&base,&arm,&head});
-            discardCachedParts(model,{&base,&arm,&head});
-            logTemplate("piston_arm");
-        }
-        // Restore bed construction-time boxes after renderer GPU compilation.
-        auto captureBed=[&]<typename T>(){
-            if constexpr(std::is_default_constructible_v<T>){
-                T model;
-                std::initializer_list<ModelPart const*> const parts={
-                    &model.mBody.get(),&model.mLeg0.get(),&model.mLeg1.get(),
-                    &model.mLeg2.get(),&model.mLeg3.get()};
-                recordActor("bed",model,parts);
-                discardCachedParts(model,parts);
-                logTemplate("bed");
-            }
-        };
-        captureBed.template operator()<BedModel>();
-        // Enchanting table and lectern books are independent native
-        // seven-bone models; their live poses must remain dynamic.
-        for(bool onLectern:{false,true}){
-            EnchantingBookModel model(onLectern);
-            std::initializer_list<ModelPart const*> const nodes={
-                &model.mBook[0].get(),&model.mBook[1].get(),
-                &model.mBook[2].get(),&model.mBook[3].get(),
-                &model.mBook[4].get(),&model.mBook[5].get(),
-                &model.mBook[6].get()
-            };
-            auto const* label=onLectern?"lectern_book":"enchanting_book";
-            recordActor(label,model,nodes);
-            discardCachedParts(model,nodes);
-            logTemplate(label);
-        }
-    }catch(std::exception const& e){
-        logger.warn("F8 native model template reconstruction failed: {}",e.what());
-    }
+    // The 26.60.5 client SDK has no imported native constructors for
+    // ChestModel/BellModel/PistonArmModel/BedModel/EnchantingBookModel.
+    // Instantiating them would also require unresolved Model vtables and
+    // AppPlatformListener methods. Capture the live renderer and its
+    // ModelPart hooks instead; never generate fake models from AABBs.
+    mod.getLogger().info("F8: native built-in model constructors unavailable on 26.60.5; relying on live renderer observation");
 }
+
 NativeSceneDiagnostics nativeSceneDiagnostics(){
     NativeSceneDiagnostics out;
     out.tessellatorCalls=tessellatorCalls.load(std::memory_order_relaxed);

@@ -46,11 +46,29 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <type_traits>
 #include <vector>
 
 namespace bsc {
 namespace {
 using Clock=std::chrono::steady_clock;
+// Newer BedrockData headers can declare accessors which no longer have
+// import-library exports. Resolve them at F8 time instead of hard-linking.
+// Absent symbol => do not dereference unverified graphics state.
+bool graphicsReady(){
+    using Accessor=bool& (*)();
+    static auto access=reinterpret_cast<Accessor>(
+        ll::memory::SymbolView{"?mInitialized@BlockGraphics@@SAAEA_NXZ"}.resolve(true));
+    return access && access();
+}
+auto graphicsModels() ->
+    std::remove_reference_t<decltype(BlockGraphics::mModels())> const* {
+    using ModelMap=std::remove_reference_t<decltype(BlockGraphics::mModels())>;
+    using Accessor=ModelMap& (*)();
+    static auto access=reinterpret_cast<Accessor>(
+        ll::memory::SymbolView{"?mModels@BlockGraphics@@SAAEAV?$map@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$unique_ptr@UModel@BlockGeometry@@U?$default_delete@UModel@BlockGeometry@@@std@@@2@U?$less@V?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@@2@V?$allocator@U?$pair@$$CBV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@V?$unique_ptr@UModel@BlockGeometry@@U?$default_delete@UModel@BlockGeometry@@@std@@@2@@std@@@2@@std@@XZ"}.resolve(true));
+    return access?&access():nullptr;
+}
 ll::mod::NativeMod* gMod{};
 class Writer {
     std::mutex mutex;
@@ -174,7 +192,7 @@ void reportControlStatus(std::string_view mode){
     log().info("BSC status: mode={}, game_focused={}, F8_key_down={}, graphics_ready={}, F8_active={}, "
                "export={}, control={}",
                mode,gameFocused(),(GetAsyncKeyState(VK_F8)&0x8000)!=0,
-               BlockGraphics::mInitialized(),gSession!=nullptr,
+               graphicsReady(),gSession!=nullptr,
                (gMod->getDataDir()/"export"/TargetGameVersion).string(),
                (gMod->getDataDir()/"control").string());
 }
@@ -259,7 +277,7 @@ void begin(LocalPlayer* player) {
     if(gSession) finish(true);
     clearNativeObservations();
     setCapturePreviewEnabled(false);
-    if(!BlockGraphics::mInitialized()){
+    if(!graphicsReady()){
         log().warn("F8: client graphics resources are not initialized");
         return;
     }
@@ -288,8 +306,9 @@ void begin(LocalPlayer* player) {
         // mBlockModelAccess() was declared but not exported in SDK 26.51.9.
         // Continue using the game-thread registry enumeration instead of the
         // unverified SDK symbol; keep model names, never pointers, across updates.
-        for(auto const& [name,model]:BlockGraphics::mModels())
-            if(model)session->geometryModels.emplace_back(name);
+        if(auto const* models=graphicsModels())
+            for(auto const& [name,model]:*models)
+                if(model)session->geometryModels.emplace_back(name);
     }
     log().info("F8 native registry snapshot: block_types={}, static_geometry_definitions={}",
                session->registrationTypes.size(),session->geometryModels.size());
@@ -598,18 +617,19 @@ void registerNativeGeometry(Session& s,Clock::time_point start) {
           Clock::now()-start<std::chrono::milliseconds(3)){
         // The game-thread update is the only supported place to read the
         // native registry: the SDK's model mutex symbol is not linkable.
-        if(!BlockGraphics::mInitialized())return;
+        if(!graphicsReady())return;
         auto const& name=s.geometryModels[s.geometryCursor++];
-        auto const& models=BlockGraphics::mModels();
-        auto it=models.find(name);
-        if(it==models.end()||!it->second)continue;
+        auto const* models=graphicsModels();
+        if(!models)continue;
+        auto it=models->find(name);
+        if(it==models->end()||!it->second)continue;
         s.library.staticModels.emplace_back(StaticModel{name,serializeStaticGeometry(name,*it->second)});
     }
 }
 void advance(Session& s) {
     // Renderer reload can invalidate BlockGraphics and atlas pointers during
     // a multi-tick export. Abort before touching those pointers.
-    if(!BlockGraphics::mInitialized()){
+    if(!graphicsReady()){
         log().warn("F8: native block graphics unloaded during export");
         finish(true);
         return;
