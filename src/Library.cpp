@@ -146,6 +146,14 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
         for(auto const& texture:block.textureBindings()){
             for(auto const& candidate:texture.variants){
                 auto const& rect=candidate.atlasUv;
+                // Native atlas metadata can contain unresolved/degenerate
+                // rectangles while textures are loading. Such a rectangle
+                // must never be assigned as a valid per-face UV mapping.
+                if(!std::all_of(rect.begin(),rect.end(),[](float v){
+                       return std::isfinite(v);
+                   }) || std::abs(rect[2]-rect[0])<=epsilon ||
+                         std::abs(rect[3]-rect[1])<=epsilon)
+                    continue;
                 auto loU=std::min(rect[0],rect[2])-epsilon;
                 auto hiU=std::max(rect[0],rect[2])+epsilon;
                 auto loV=std::min(rect[1],rect[3])-epsilon;

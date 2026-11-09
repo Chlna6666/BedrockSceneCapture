@@ -727,7 +727,10 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     auto const& normals=raw.mNormals.get();
     auto const& uv=raw.mTextureUVs[0].get();
     auto const& colors=raw.mColors.get();
-    mesh.uvValid=(uv.size()==points.size());
+    mesh.uvValid=uv.size()==points.size() &&
+        std::all_of(uv.begin()+fromPos,uv.end(),[](auto const& value){
+            return std::isfinite(value.x)&&std::isfinite(value.y);
+        });
     mesh.vertices.reserve(points.size()-fromPos);
     for(auto i=fromPos;i<points.size();++i){
         auto const& p=points[i];

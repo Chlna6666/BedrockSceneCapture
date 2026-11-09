@@ -1,4 +1,6 @@
 #include "MeshUtils.h"
+#include <algorithm>
+#include <cmath>
 #include "ll/api/memory/Symbol.h"
 #include "NativeCoordinates.h"
 #include "mc/client/renderer/Tessellator.h"
@@ -51,7 +53,10 @@ void captureMesh(BlockSource& region,BlockTessellator& blocks,Tessellator& tess,
         }
         auto const& normals=raw.mNormals.get();
         auto const& uv=raw.mTextureUVs[0].get();
-        mesh.uvValid=(uv.size()==points.size());
+        mesh.uvValid=uv.size()==points.size() &&
+            std::all_of(uv.begin(),uv.end(),[](auto const& value){
+                return std::isfinite(value.x)&&std::isfinite(value.y);
+            });
         auto const& colors=raw.mColors.get();
         for(std::size_t i=0;i<points.size();++i){
             Vertex v;
