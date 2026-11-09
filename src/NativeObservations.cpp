@@ -63,6 +63,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <sstream>
 #include <type_traits>
 #include <unordered_map>
@@ -173,8 +174,18 @@ void vec3(std::ostringstream& o,Vec3 const& v){
 void vec2(std::ostringstream& o,Vec2 const& v){
     o<<'['<<v.x<<','<<v.y<<']';
 }
+using NativeTextureResources=std::vector<std::pair<std::string,std::string>>;
+std::string actorColorPath(ActorTextureInfo const& texture){
+    return texture.mResourceLocations.get().mColorLocation.get().mPath.get().value;
+}
+void addActorColor(NativeTextureResources& out,
+                   std::string const& variant,ActorTextureInfo const& texture){
+    auto const path=actorColorPath(texture);
+    if(!path.empty() && path.size()<=1024)out.emplace_back(variant,path);
+}
 std::string modelJson(Model const& model,
-                      std::vector<ModelPart const*> const& explicitParts){
+                      std::vector<ModelPart const*> const& explicitParts,
+                      NativeTextureResources const& resources){
     std::ostringstream o;
     o.imbue(std::locale::classic());
     o<<std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -190,7 +201,17 @@ std::string modelJson(Model const& model,
     std::unordered_map<ModelPart const*,std::size_t> indices;
     for(std::size_t i=0;i<parts.size();++i)if(parts[i])indices.emplace(parts[i],i);
     o<<"{\"schema\":1,\"source\":\"native_block_actor_model_parts\","
-     "\"coordinate_space\":\"model_local\",\"animation_pose\":\"not_captured\",\"parts\":[";
+     "\"coordinate_space\":\"model_local\",\"animation_pose\":\"not_captured\","
+     "\"texture_mapping\":\"native_variants_unresolved_per_face\","
+     "\"native_texture_resources\":[";
+    bool firstResource=true;
+    for(auto const& [variant,resource]:resources){
+        if(!firstResource)o<<',';
+        firstResource=false;
+        o<<"{\"variant\":"<<quote(variant)
+         <<",\"color_resource\":"<<quote(resource)<<'}';
+    }
+    o<<"],\"parts\":[";
     bool firstPart=true;
     std::size_t cubes=0,polyFaces=0,sourceBoxCount=0,unresolvedCubes=0;
     std::size_t incompleteSourceUVs=0,incompleteNativeUVs=0;
@@ -370,7 +391,8 @@ std::string modelJson(Model const& model,
     return cubes||polyFaces||sourceBoxCount?o.str():std::string{};
 }
 void recordActor(char const* label,Model const& model,
-                 std::vector<ModelPart const*> const& explicitParts){
+                 std::vector<ModelPart const*> const& explicitParts,
+                 NativeTextureResources const& resources={}){
     if(!armed.load(std::memory_order_relaxed))return;
     std::unique_lock lock(mutex,std::try_to_lock);
     if(!lock.owns_lock())return;
@@ -386,7 +408,7 @@ void recordActor(char const* label,Model const& model,
     auto const it=actorLastAttempt.find(label);
     if(it!=actorLastAttempt.end() && now-it->second<std::chrono::seconds(1))return;
     actorLastAttempt[std::string(label)]=now;
-    auto json=modelJson(model,explicitParts);
+    auto json=modelJson(model,explicitParts,resources);
     if(json.empty())return;
     if(existing!=actorModels.end()){
         // Only replace an incomplete snapshot with one whose native CPU
