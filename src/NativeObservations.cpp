@@ -52,6 +52,7 @@
 #include "mc/client/model/models/SerializedActorModel.h"
 #include <atomic>
 #include <array>
+#include <bitset>
 #include <algorithm>
 #include <chrono>
 #include <initializer_list>
@@ -960,14 +961,40 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
         dest.boxes.emplace_back(out.str());
     }
 }
+thread_local unsigned gWorldTessellationDepth{};
+struct WorldTessellationScope {
+    WorldTessellationScope(){++gWorldTessellationDepth;}
+    ~WorldTessellationScope(){--gWorldTessellationDepth;}
+};
 LL_TYPE_INSTANCE_HOOK(BSCNativeBlockHook,ll::memory::HookPriority::Normal,
     BlockTessellator,&BlockTessellator::tessellateInWorld,bool,
     Tessellator& tess,Block const& block,BlockPos const& pos,bool useCache) {
     if(!armed.load(std::memory_order_relaxed))return origin(tess,block,pos,useCache);
     auto const beforePos=tess.mMeshData.get().mPositions.get().size();
     auto const beforeIdx=tess.mMeshData.get().mIndices.get().size();
+    WorldTessellationScope scope;
     bool const result=origin(tess,block,pos,useCache);
-    captureWorld(*this,tess,block,pos,beforePos,beforeIdx);
+    // A nested fallback can tessellate the same block. Only take the
+    // outermost completed mesh to preserve all faces and texture layers.
+    if(gWorldTessellationDepth==1)
+        captureWorld(*this,tess,block,pos,beforePos,beforeIdx);
+    return result;
+}
+// The SDK also exports tessellateBlockInWorld with a face mask. Some
+// render paths call it directly without going through tessellateInWorld.
+// Capture that path only when it is not nested in the normal world call.
+LL_TYPE_INSTANCE_HOOK(BSCNativeMaskedBlockHook,ll::memory::HookPriority::Normal,
+    BlockTessellator,&BlockTessellator::tessellateBlockInWorld,bool,
+    Tessellator& tess,Block const& block,BlockPos const& pos,
+    std::bitset<6> const faces,AirAndSimpleBlockBits const* air){
+    if(!armed.load(std::memory_order_relaxed) || gWorldTessellationDepth!=0)
+        return origin(tess,block,pos,faces,air);
+    auto const beforePos=tess.mMeshData.get().mPositions.get().size();
+    auto const beforeIdx=tess.mMeshData.get().mIndices.get().size();
+    WorldTessellationScope scope;
+    bool const result=origin(tess,block,pos,faces,air);
+    if(gWorldTessellationDepth==1)
+        captureWorld(*this,tess,block,pos,beforePos,beforeIdx);
     return result;
 }
 LL_TYPE_INSTANCE_HOOK(BSCChestModelHook,ll::memory::HookPriority::Normal,
@@ -1082,7 +1109,7 @@ LL_TYPE_INSTANCE_HOOK(BSCDispatcherRenderHook,ll::memory::HookPriority::Normal,
     recordDispatchedActor(*this,component);
 }
 bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
-bool installedWorld{},installedDispatch{},installedImplicitDispatch{},installedChest{},installedSign{},
+bool installedWorld{},installedWorldMasked{},installedDispatch{},installedImplicitDispatch{},installedChest{},installedSign{},
      installedHanging{},installedPiston{},installedPot{};
 }
 void installActorRenderHooks(ll::mod::NativeMod& mod){
@@ -1131,7 +1158,7 @@ bool installActorWireframeObservations(ll::mod::NativeMod& mod){
     return installedDispatch || installedImplicitDispatch || partHook;
 }
 bool installNativeObservations(ll::mod::NativeMod& mod){
-    if(installedWorld)return true;
+    if(installedWorld && installedWorldMasked)return true;
     auto& logger=mod.getLogger();
     auto install=[&](char const* label,bool& installed,auto patch){
         if(installed)return;
@@ -1143,6 +1170,8 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
     };
     install("BlockTessellator::tessellateInWorld",installedWorld,
         []{return BSCNativeBlockHook::hook();});
+    install("BlockTessellator::tessellateBlockInWorld(face-mask)",installedWorldMasked,
+        []{return BSCNativeMaskedBlockHook::hook();});
     // F6 red preview and F7 amber preview consume the same live CPU geometry.
     // Hooking only renderer-specific model collectors could never produce a
     // complete F6 red BlockEntity preview.
@@ -1154,14 +1183,14 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         []{return BSCPartLoadBoxesHook::hook();});
     install("ModelPart::compileCubes",installedPartCompile,
         []{return BSCPartCompileCubesHook::hook();});
-    logger.info("F6 native hooks initialized: world={}, dispatcher_explicit={}, dispatcher_implicit={}, direct_actor_hooks={}/5, source_box_hooks={}/3",
-        installedWorld,installedDispatch,installedImplicitDispatch,
+    logger.info("F6 native hooks initialized: world={}, masked_world={}, dispatcher_explicit={}, dispatcher_implicit={}, direct_actor_hooks={}/5, source_box_hooks={}/3",
+        installedWorld,installedWorldMasked,installedDispatch,installedImplicitDispatch,
         static_cast<int>(installedChest)+static_cast<int>(installedSign)+
         static_cast<int>(installedHanging)+static_cast<int>(installedPiston)+
         static_cast<int>(installedPot),
         static_cast<int>(installedPartAdd)+static_cast<int>(installedPartLoad)+
         static_cast<int>(installedPartCompile));
-    return installedWorld;
+    return installedWorld || installedWorldMasked;
 }
 void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
     // The 26.60.5 client SDK has no imported native constructors for
@@ -1280,6 +1309,9 @@ void uninstallNativeObservations(){
     if(installedHanging){BSCHangingSignModelHook::unhook();installedHanging=false;}
     if(installedSign){BSCSignModelHook::unhook();installedSign=false;}
     if(installedChest){BSCChestModelHook::unhook();installedChest=false;}
+    if(installedWorldMasked){
+        BSCNativeMaskedBlockHook::unhook();installedWorldMasked=false;
+    }
     if(installedWorld){BSCNativeBlockHook::unhook();installedWorld=false;}
     clearNativeObservations();
 }
