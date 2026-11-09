@@ -267,6 +267,12 @@ std::string modelJson(Model const& model,
         auto const& uvs=poly.mUVs.get();
         auto const& tris=poly.mTris.get();
         auto const& quads=poly.mQuads.get();
+        bool const polygonUVComplete=!uvs.empty() &&
+            std::all_of(uvs.begin(),uvs.end(),[](auto const& uv){
+                return std::isfinite(uv.x)&&std::isfinite(uv.y);
+            });
+        if((!tris.empty()||!quads.empty()) && !polygonUVComplete)
+            ++incompleteNativeUVs;
         bool valid=!positions.empty() && positions.size()<=65536 &&
                    normals.size()<=65536 && uvs.size()<=65536 &&
                    tris.size()+quads.size()<=65536;
@@ -305,7 +311,8 @@ std::string modelJson(Model const& model,
                 if(i)o<<',';
                 vec2(o,uvs[i]);
             }
-            o<<"],\"uv_normalized\":"<<(poly.mAreUVsNormalized?"true":"false");
+            o<<"],\"uv_complete\":"<<(polygonUVComplete?"true":"false")
+             <<",\"uv_normalized\":"<<(poly.mAreUVsNormalized?"true":"false");
             auto writeFaces=[&](auto const& faces){
                 o<<'[';
                 for(std::size_t i=0;i<faces.size();++i){

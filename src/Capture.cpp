@@ -187,6 +187,7 @@ void collectNativeSamples(Session& s) {
         // Keep proxies for dynamic blocks: a single neighbor observation
         // cannot describe every state.
         if(event.mesh.uvValid && !event.mesh.vertices.empty() &&
+           !event.positionVariantCandidate &&
            !block.dynamic && !block.blockEntity){
             std::erase_if(block.samples,[](ModelSample const& old){
                 return old.neighborhood=="registry_visual_bounds";
