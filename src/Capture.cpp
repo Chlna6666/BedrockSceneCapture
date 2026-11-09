@@ -260,6 +260,8 @@ void finish(bool cancelled) {
                actorStatus.hooksInstalled[4],actorStatus.hooksInstalled[5],
                actorStatus.hooksInstalled[6],
                actorStatus.capturedModels,actorStatus.observedWithoutGeometry.size());
+    log().info("F6 native dispatcher observed mask: 0x{:08x} (28 renderer IDs; observed != captured UV geometry)",
+                actorStatus.observedRendererMask);
     log().info("F6 native box construction hooks: add_box={}, load_boxes={}, compile_cubes={}, retained_parts={}, source_boxes={}",
                actorStatus.sourceAddBoxHook,actorStatus.sourceLoadBoxesHook,
                actorStatus.sourceCompileCubesHook,actorStatus.retainedSourceParts,actorStatus.retainedSourceBoxes);
@@ -385,6 +387,9 @@ void registerStates(Session& s,Clock::time_point started) {
         case BlockActorType::Sign:
         case BlockActorType::HangingSign:
         case BlockActorType::Skull:
+        case BlockActorType::Chalkboard:
+        case BlockActorType::PistonArm:
+        case BlockActorType::MovingBlock:
         case BlockActorType::Bed:
         case BlockActorType::Banner:
         case BlockActorType::ShulkerBox:
@@ -416,6 +421,21 @@ void registerStates(Session& s,Clock::time_point started) {
             entry.actorModelKeys={"standing_sign"};break;
         case BlockActorType::HangingSign:
             entry.actorModelKeys={"hanging_sign"};break;
+        case BlockActorType::Skull:
+            // The actual skull type / player skin is held in BlockActor NBT.
+            entry.actorModelKeys={"skull_skeleton","skull_wither","skull_zombie",
+                "skull_player","skull_creeper","skull_dragon","skull_piglin"};
+            entry.geometryContext="skull_type_and_skin_nbt";entry.dynamic=true;break;
+        case BlockActorType::Banner:
+            entry.actorModelKeys={"banner_base"};
+            entry.geometryContext="banner_pattern_layers_nbt";entry.dynamic=true;break;
+        case BlockActorType::Chalkboard:
+            entry.actorModelKeys={"chalkboard_1x1","chalkboard_2x1","chalkboard_3x2"};
+            entry.geometryContext="chalkboard_size_and_text_nbt";entry.dynamic=true;break;
+        case BlockActorType::DecoratedPot:
+            entry.actorModelKeys={"decorated_pot_base","decorated_pot_front",
+                "decorated_pot_back","decorated_pot_left","decorated_pot_right"};
+            entry.geometryContext="decorated_pot_sherds_nbt";entry.dynamic=true;break;
         case BlockActorType::Bed:
             entry.actorModelKeys={"bed"};break;
         case BlockActorType::ShulkerBox:
@@ -439,7 +459,8 @@ void registerStates(Session& s,Clock::time_point started) {
             entry.geometryContext="brewing_contents";
             entry.dynamic=true;break;
         case BlockActorType::CopperGolemStatue:
-            entry.geometryContext="serialized_actor_pose";
+            entry.actorModelKeys={"copper_golem_statue"};
+            entry.geometryContext="serialized_actor_pose_and_oxidation";
             entry.dynamic=true;break;
         default:break;
         }

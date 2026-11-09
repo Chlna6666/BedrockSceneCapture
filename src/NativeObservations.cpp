@@ -40,6 +40,15 @@
 #include "mc/client/renderer/blockactor/EnchantingTableRenderer.h"
 #include "mc/client/renderer/blockactor/BeaconRenderer.h"
 #include "mc/client/renderer/blockactor/SerializedActorRenderer.h"
+#include "mc/client/renderer/blockactor/SkullBlockRenderer.h"
+#include "mc/client/renderer/blockactor/ChalkboardRenderer.h"
+#include "mc/client/renderer/blockactor/CopperGolemStatueRenderer.h"
+#include "mc/client/model/models/SkeletonHeadModel.h"
+#include "mc/client/model/models/DragonHeadModel.h"
+#include "mc/client/model/models/PiglinHeadModel.h"
+#include "mc/client/model/models/BannerModel.h"
+#include "mc/client/model/models/ChalkboardModel.h"
+#include "mc/client/model/models/SerializedActorModel.h"
 #include <atomic>
 #include <array>
 #include <algorithm>
@@ -52,6 +61,7 @@
 #include <locale>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <sstream>
 #include <type_traits>
 #include <unordered_map>
@@ -59,6 +69,9 @@
 namespace bsc {
 namespace {
 std::atomic_bool armed{false};
+// Bit i means the native dispatcher actually rendered renderer-id i during
+// this F6 recording. A registered renderer is NOT a captured UV model.
+std::atomic<std::uint32_t> observedRendererMask{0};
 std::mutex mutex;
 struct IdHash {
     std::size_t operator()(std::array<std::uint32_t,30> const& values) const noexcept {
@@ -153,7 +166,7 @@ void vec2(std::ostringstream& o,Vec2 const& v){
     o<<'['<<v.x<<','<<v.y<<']';
 }
 std::string modelJson(Model const& model,
-                      std::initializer_list<ModelPart const*> explicitParts){
+                      std::vector<ModelPart const*> const& explicitParts){
     std::ostringstream o;
     o.imbue(std::locale::classic());
     o<<std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -349,7 +362,7 @@ std::string modelJson(Model const& model,
     return cubes||polyFaces||sourceBoxCount?o.str():std::string{};
 }
 void recordActor(char const* label,Model const& model,
-                 std::initializer_list<ModelPart const*> explicitParts){
+                 std::vector<ModelPart const*> const& explicitParts){
     if(!armed.load(std::memory_order_relaxed))return;
     std::unique_lock lock(mutex,std::try_to_lock);
     if(!lock.owns_lock())return;
@@ -386,9 +399,91 @@ void recordDispatchedActor(BlockActorRenderDispatcher& dispatcher,
     auto const id=component.getRendererId();
     auto const& renderers=dispatcher.mRenderers.get();
     if(static_cast<std::size_t>(id)>=renderers.size())return;
+    observedRendererMask.fetch_or(std::uint32_t{1}<<static_cast<unsigned>(id),
+                                 std::memory_order_relaxed);
     auto const& renderer=renderers[id];
     if(!renderer)return;
+    // Throttle the expensive model inspection per renderer family, rather
+    // than per BlockActor instance. A renderer often draws hundreds of
+    // instances each frame; incomplete captures retry on later seconds.
+    static std::array<std::atomic<std::int64_t>,28> sampledSecond{};
+    auto const second=std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    auto& last=sampledSecond[index];
+    auto prev=last.load(std::memory_order_relaxed);
+    if(prev==second || !last.compare_exchange_strong(
+        prev,second,std::memory_order_relaxed))return;
     switch(id){
+    case BlockActorRendererId::Skull: {
+        auto const* skull=static_cast<SkullBlockRenderer const*>(renderer.get());
+        // The slot order is SkullBlock::SkullType (0 skeleton, 1 wither,
+        // 2 zombie, 3 char/player, 4 creeper, 5 dragon, 6 piglin).
+        // Export the base geometry; custom skin/texture NBT is separate.
+        constexpr std::array<char const*,7> names{
+            "skull_skeleton","skull_wither","skull_zombie",
+            "skull_player","skull_creeper","skull_dragon","skull_piglin"};
+        auto const& generic=skull->mSkullGeometry.get();
+        for(std::size_t i=0;i<generic.size();++i){
+            if((i==5 && skull->mDragonHeadModel.get()) ||
+               (i==6 && skull->mPiglinHeadModel.get()))continue;
+            if(auto const& model=generic[i];model)
+                recordActor(names[i],*model,{&model->mHead.get()});
+        }
+        if(auto const& dragon=skull->mDragonHeadModel.get();dragon)
+            recordActor("skull_dragon",*dragon,{&dragon->mHead.get(),
+                &dragon->mJaw.get(),&dragon->mSnout.get()});
+        if(auto const& piglin=skull->mPiglinHeadModel.get();piglin)
+            recordActor("skull_piglin",*piglin,{&piglin->mHead.get(),
+                &piglin->mLeftEar.get(),&piglin->mRightEar.get()});
+        break;
+    }
+    case BlockActorRendererId::Banner: {
+        auto const& model=static_cast<BannerRenderer const*>(renderer.get())->mBannerModel.get();
+        if(model)recordActor("banner_base",*model,{&model->mFlag.get(),
+            &model->mPole.get(),&model->mLongPole.get(),&model->mBar.get()});
+        break;
+    }
+    case BlockActorRendererId::Chalkboard: {
+        auto const* chalk=static_cast<ChalkboardRenderer const*>(renderer.get());
+        auto save=[&](char const* name,ChalkboardModel const& m){
+            recordActor(name,m,{&m.mBoard.get(),&m.mLeftLeg.get(),&m.mRightLeg.get()});
+        };
+        save("chalkboard_1x1",chalk->mOneByOne.get());
+        save("chalkboard_2x1",chalk->mTwoByOne.get());
+        save("chalkboard_3x2",chalk->mThreeByTwo.get());
+        break;
+    }
+    case BlockActorRendererId::DecoratedPot: {
+        auto const* pot=static_cast<DecoratedPotRenderer const*>(renderer.get());
+        auto const& base=pot->mPotBase.get();
+        recordActor("decorated_pot_base",base,{&base.mNeckOuter.get(),
+            &base.mNeckInner.get(),&base.mBottom.get(),&base.mTop.get()});
+        auto face=[&](char const* name,DecoratedPotFace const& m){
+            recordActor(name,m,{&m.mModel.get()});
+        };
+        face("decorated_pot_front",pot->mFrontFace.get());
+        face("decorated_pot_back",pot->mBackFace.get());
+        face("decorated_pot_left",pot->mLeftFace.get());
+        face("decorated_pot_right",pot->mRightFace.get());
+        break;
+    }
+    case BlockActorRendererId::CopperGolemStatue: {
+        auto const& models=static_cast<CopperGolemStatueRenderer const*>(
+            renderer.get())->mModels.get();
+        // Native variants may encode different poses and oxidization states.
+        // Do not collapse them into a single geometry or fabricate a mapping.
+        for(std::size_t i=0;i<std::min(models.size(),std::size_t{32});++i){
+            auto const& model=models[i];
+            auto const& nativeParts=model.mParts.get();
+            std::vector<ModelPart const*> parts;
+            parts.reserve(nativeParts.size());
+            for(auto const& part:nativeParts)parts.push_back(&part);
+            auto const name=i==0?std::string("copper_golem_statue"):
+                "copper_golem_statue_"+std::to_string(i);
+            recordActor(name.c_str(),model,parts);
+        }
+        break;
+    }
     case BlockActorRendererId::Bed: {
         auto const& model=static_cast<BedRenderer const*>(renderer.get())->mBed.get();
         recordActor("bed",model,{&model.mBody.get(),&model.mLeg0.get(),
@@ -885,7 +980,9 @@ LL_TYPE_INSTANCE_HOOK(BSCDispatcherRenderHook,ll::memory::HookPriority::Normal,
     ActorWireframeScope scope{ctx,world,relative};
     origin(ctx,source,component,block,relative,world,alpha,material,texture,
            breaking,metadata);
-    if(!alpha)recordDispatchedActor(*this,component);
+    // Some BlockActors only render their visible model in the alpha pass.
+    // Attempt capture on either pass; the per-family throttle deduplicates.
+    recordDispatchedActor(*this,component);
 }
 bool installedPartAdd{},installedPartLoad{},installedPartCompile{};
 bool installedWorld{},installedDispatch{},installedChest{},installedSign{},
@@ -994,6 +1091,7 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
     diagnostics.hooksInstalled={installedChest,installedSign,installedHanging,
                                 false,false,false,installedPiston};
     diagnostics.dispatcherHook=installedDispatch;
+    diagnostics.observedRendererMask=observedRendererMask.load(std::memory_order_relaxed);
     std::lock_guard lock(mutex);
     diagnostics.capturedModels=recordedActorLabels.size();
     diagnostics.sourceAddBoxHook=installedPartAdd;
@@ -1018,6 +1116,7 @@ void clearNativeObservations(){
     armed.store(false,std::memory_order_release);
     std::lock_guard lock(mutex);
     seen.clear();
+    observedRendererMask.store(0,std::memory_order_relaxed);
     recordedVertices=0;
     fullBoundsBlockSamples=0;
     shapesObserved.clear();
