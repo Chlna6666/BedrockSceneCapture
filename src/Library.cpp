@@ -606,7 +606,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     "\"target_game_version\":\"" << TargetGameVersion << "\","
                     "\"levilamina_sdk_version\":\"" << TargetLeviLaminaSdkVersion << "\","
                  << "\"capture_revision\":" << exportRevision << ','
-                    "\"resource_pack_fingerprint\":null,"
+                 << "\"resource_pack_fingerprint\":null,"
                     "\"resource_pack_fingerprint_status\":\"not_captured\","
                     "\"textures_exported\":false,"
                     "\"shared_geometry_references\":" << meshRefs
