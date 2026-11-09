@@ -182,6 +182,16 @@ void collectNativeSamples(Session& s) {
         auto it=s.idToIndex.find(event.stateIds[0]);
         if(it==s.idToIndex.end())continue;
         auto& block=s.library.blocks[it->second];
+        // For fixed blocks, valid native tessellation supersedes the
+        // registry's approximate bounding box and its generic full-face UV.
+        // Keep proxies for dynamic blocks: a single neighbor observation
+        // cannot describe every state.
+        if(event.mesh.uvValid && !event.mesh.vertices.empty() &&
+           !block.dynamic && !block.blockEntity){
+            std::erase_if(block.samples,[](ModelSample const& old){
+                return old.neighborhood=="registry_visual_bounds";
+            });
+        }
         ModelSample sample;
         sample.neighborhood="native_scene";
         sample.nativeObserved=true;

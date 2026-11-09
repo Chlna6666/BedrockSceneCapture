@@ -171,6 +171,7 @@ std::string modelJson(Model const& model,
         auto const* part=parts[index];
         if(!part)continue;
         std::size_t missingPartUVs=0,completeSourceUVs=0;
+        std::size_t completeNativeUVs=0,incompleteSourcePartUVs=0,unresolvedPartCubes=0;
         if(!firstPart)o<<',';
         firstPart=false;
         auto const parent=indices.find(part->mParent);
@@ -190,7 +191,7 @@ std::string modelJson(Model const& model,
             // zero mSize through this SDK. Never serialize them as real boxes.
             if(!std::isfinite(size.x)||!std::isfinite(size.y)||!std::isfinite(size.z) ||
                size.x==0.f||size.y==0.f||size.z==0.f){
-                ++unresolvedCubes;
+                ++unresolvedPartCubes;
                 continue;
             }
             if(!firstCube)o<<',';
@@ -226,6 +227,7 @@ std::string modelJson(Model const& model,
             }
             cubeUVComplete=cubeUVComplete && validFaces>0;
             if(!cubeUVComplete)++missingPartUVs;
+            else ++completeNativeUVs;
             o<<"],\"uv_complete\":"<<(cubeUVComplete?"true":"false")<<'}';
         }
         o<<"]";
@@ -242,7 +244,7 @@ std::string modelJson(Model const& model,
                     o<<it->second.boxes[i];
                     if(it->second.boxes[i].find("\"uv_complete\":true")!=std::string::npos)
                         ++completeSourceUVs;
-                    else ++incompleteSourceUVs;
+                    else ++incompleteSourcePartUVs;
                 }
                 o<<']';
                 sourceBoxCount+=it->second.boxes.size();
@@ -250,8 +252,12 @@ std::string modelJson(Model const& model,
         }
         // CPU Cubes and source boxes may represent the same boxes. A complete
         // source face layout can recover missing live Cube UV data.
+        unresolvedCubes+=unresolvedPartCubes>completeSourceUVs?
+            unresolvedPartCubes-completeSourceUVs:0;
         if(missingPartUVs>completeSourceUVs)
             incompleteNativeUVs+=missingPartUVs-completeSourceUVs;
+        if(incompleteSourcePartUVs>completeNativeUVs)
+            incompleteSourceUVs+=incompleteSourcePartUVs-completeNativeUVs;
         // Some data-driven BlockActors use an indexed polygon mesh rather
         // than procedural Cubes. Preserve the original vertex/normal/UV
         // indices and topology instead of approximating it with a box.
@@ -703,7 +709,8 @@ LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
         if(hasFaceUVs)for(std::size_t i=0;i<faces.size();++i){
             auto const& uv=faces[i].mUV.get();
             auto const& uvSize=faces[i].mUVSize.get();
-            if(!finite(uv.x)||!finite(uv.y)||!finite(uvSize.x)||!finite(uvSize.y)){
+            if(!finite(uv.x)||!finite(uv.y)||!finite(uvSize.x)||!finite(uvSize.y)||
+               (faces[i].mFaceValid && (uvSize.x==0.f||uvSize.y==0.f))){
                 completeFaceUVs=false;
                 continue;
             }

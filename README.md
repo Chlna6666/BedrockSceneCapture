@@ -8,7 +8,7 @@ LeviLamina 26.51.9 **客户端**原生模组，目标为 BMCBL 3D 编辑器导�
 - **原生静态 BlockGeometry**：保留模型名称、父模型、元素、立方体、六个面、局部 UV、旋转、纹理映射。输出 `geometry_catalog.json`；BlockState 与该目录之间尚不存在经过验证的全量一一映射。
 - **CPU 直接构建网格**：对原生 `BlockShape::Block`、`SlimeBlock` 的可视 AABB 生成六面带法线三角形；对 `CrossTexture`、`DoublesidedCrossTexture`、`DoublesidedWideCrossTexture` 生成双面交叉平面。均在主线程分帧构建、全程不使用 GPU、不读 ChunkSource。具有相同可视边界、渲染层与形状的网格在内存中共享，磁盘按 SHA-256 去重。
 - **真实渲染场景**：Hook 原生 `BlockTessellator::tessellateInWorld`，只在 F8 录制期间截取楼梯、栅栏、墙、流体等实际输出的几何；状态签名保存中心及 26 邻居的本次游戏注册网络 ID，`native_scene` 仅保证已观察到的邻居排列。无观察样本时不声称精确覆盖。
-- **专用 BlockActor**：Hook 箱子、告示牌、悬挂告示牌、床、潜影盒、钟的渲染入口；提取原生 `ModelPart`、`Cube`、骨骼层级与每面 UV，保存到 `entities.json` 和哈希命名模型文件。动画姿态和文本暂不导出。
+- **专用 BlockActor**：Hook 箱子、告示牌、悬挂告示牌、床、潜影盒、钟的渲染入口；提取原生 `ModelPart`、`Cube`、骨骼层级与每面 UV，保存到 `entities.json` 和哈希命名模型文件。旧式 Box UV 按 Bedrock 六面展开为纹理像素坐标；缺少有效 UV 的模型不再标为完整，床支持尝试构造模板补采。动画姿态和文本暂不导出。
 - **F7 — 世界调试线框**：仍依赖游戏已加载区块。与 F8 无区块模型库是两条独立链路。
 - **F9 — 取消 F8**：在清单里标记取消，不谎报完成。
 

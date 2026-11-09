@@ -168,6 +168,20 @@ def validate(root: Path):
             errors.append("invalid BlockEntity native model reference")
             continue
         parts=model.get("parts",[])
+        if model.get("geometry_complete") is True:
+            if any(model.get(key,0) for key in (
+                "unresolved_compiled_cubes","incomplete_source_uv_boxes",
+                "incomplete_native_uv")):
+                errors.append("complete BlockEntity model contains unresolved UV")
+            for part in parts:
+                for box in part.get("native_source_boxes",[]):
+                    if box.get("uv_complete") and not box.get("faces"):
+                        errors.append("complete BlockEntity source box has no face UV")
+                    if box.get("uv_mapping")=="legacy_box_unfold" and (
+                        len(box.get("faces",[]))!=6 or
+                        {face.get("name") for face in box["faces"]}!=
+                        {"up","down","north","south","west","east"}):
+                        errors.append("invalid legacy BlockEntity UV unfolding")
         if not any(
             p.get("cubes") or p.get("native_source_boxes") or
             (p.get("poly_mesh",{}).get("positions") and

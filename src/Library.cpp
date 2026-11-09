@@ -368,7 +368,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::map<std::string, std::uint32_t> statuses;
         std::set<std::string> capturedActorModelKeys;
         for(auto const& actor:data.actorModels)
-            if(!actor.geometryJson.empty())capturedActorModelKeys.insert(actor.name);
+            if(actor.geometryJson.find("\"geometry_complete\":true")!=std::string::npos)
+                capturedActorModelKeys.insert(actor.name);
         std::ostringstream blocks, coverage;
         blocks << "{\"schema\":1,\"key_encoding\":\"native_block_state_nbt_le_hex\","
                   "\"uv_space\":\"per_mesh_declared\",\"blocks\":[";

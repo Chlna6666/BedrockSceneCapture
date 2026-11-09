@@ -26,6 +26,10 @@ jobs:
         run: g++ -std=c++20 -O2 -Wall -Wextra -pedantic -Isrc src/GeometryPool.cpp tools/geometry_pool_self_test.cpp -o /tmp/geometry_pool_test
       - name: Validate canonical topology and independent appearance
         run: /tmp/geometry_pool_test
+      - name: Compile legacy box UV test
+        run: g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -Isrc tools/model_uv_self_test.cpp -o /tmp/model_uv_test
+      - name: Verify six-face UV layout and invalid dimensions
+        run: /tmp/model_uv_test
   windows-x64:
     runs-on: windows-latest
     timeout-minutes: 60
