@@ -27,19 +27,19 @@ public:
         if(!installCapture()) {
             mod.getLogger().error("BSC enable failed at player tick hook");return false;
         }
-        mod.getLogger().info("BSC enable [2/4]: overlay render hook deferred until F7 / in-world F8");
+        mod.getLogger().info("BSC enable [2/4]: overlay render hook deferred until F7 / in-world F6");
         mod.getLogger().info("BSC enable [3/4]: installing menu update hook");
         if(!installMenuCapture())
-            mod.getLogger().warn("BSC menu hook unavailable: in-world F8 remains usable");
-        // Heavy native scene and BlockActor hooks are installed only when F8
+            mod.getLogger().warn("BSC menu hook unavailable: in-world F6 remains usable");
+        // Heavy native scene and BlockActor hooks are installed only when F6
         // is requested in-world, not under the plugin enable path.
-        mod.getLogger().info("BSC enable [4/4]: initializing control directory; native scene hooks deferred until F8");
+        mod.getLogger().info("BSC enable [4/4]: initializing control directory; native scene hooks deferred until F6");
         auto const controls=mod.getDataDir()/"control";
         std::error_code controlError;
         std::filesystem::create_directories(controls,controlError);
         if(controlError)
             mod.getLogger().warn("BSC control directory unavailable: {}: {}",controls.string(),controlError.message());
-        mod.getLogger().info("BSC enabled: on-demand F7 render hook, F8 model export with deferred native hooks, F9 cancel");
+        mod.getLogger().info("BSC enabled: on-demand F7 render hook, F6 model export with deferred native hooks, F9 cancel");
         mod.getLogger().info("BSC remote control directory: {}",controls.string());
         mod.getLogger().info("BSC export directory: {}",(mod.getDataDir()/"export"/TargetGameVersion).string());
         return true;

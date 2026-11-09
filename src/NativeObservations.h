@@ -29,7 +29,7 @@ struct NativeSceneDiagnostics {
 };
 NativeSceneDiagnostics nativeSceneDiagnostics();
 // Recreate selected built-in CPU model definitions after source-box hooks are active.
-// Used only on explicit F8, never during mod startup.
+// Used only on explicit F6, never during mod startup.
 void captureBuiltInModelTemplates(ll::mod::NativeMod& mod);
 struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell, piston arm.
@@ -44,7 +44,7 @@ struct ActorCaptureDiagnostics {
 };
 ActorCaptureDiagnostics actorCaptureDiagnostics();
 bool installNativeObservations(ll::mod::NativeMod& mod);
-// F7 installs only actor renderers + live model-part hook, not F8 scene capture.
+// F7 installs only actor renderers + live model-part hook, not F6 scene capture.
 bool installActorWireframeObservations(ll::mod::NativeMod& mod);
 void uninstallNativeObservations();
 void armNativeObservations(bool enabled);

@@ -69,7 +69,7 @@ bool gOverlayInstalled{};
 constexpr std::size_t MaxCaptureSections=384;
 constexpr std::size_t MaxCaptureSegments=250000;
 // Reserve capacity for BlockEntity previews. The ordinary world tessellator
-// can otherwise fill all F8 sections/segments before a renderer is observed.
+// can otherwise fill all F6 sections/segments before a renderer is observed.
 constexpr std::size_t MaxBlockCaptureSections=MaxCaptureSections-48;
 constexpr std::size_t MaxBlockCaptureSegments=MaxCaptureSegments-40000;
 constexpr std::size_t MaxCaptureSectionSegments=12000;
@@ -406,10 +406,10 @@ double chunkCameraDistanceSq(ChunkWire const& chunk,Vec3 const& camera){
     double const dz=static_cast<double>(chunk.z)*16.0+8.0-camera.z;
     return dx*dx+dz*dz;
 }
-// F7 and F8 draw independently. F8 must not require a populated F7 chunk
+// F7 and F6 draw independently. F6 must not require a populated F7 chunk
 // queue or resources initialized by the F7 updater.
-void render(BaseActorRenderContext& ctx,bool drawF7,bool drawF8){
-    if(!drawF7&&!drawF8)return;
+void render(BaseActorRenderContext& ctx,bool drawF7,bool drawF6){
+    if(!drawF7&&!drawF6)return;
     auto* level=ctx.mClientInstance.getLevelRenderer();
     if(!level||!level->mLevelRendererPlayer)return;
     auto const& material=level->mLevelRendererPlayer->mOutlineSelectionMaterial.get();
@@ -427,7 +427,7 @@ void render(BaseActorRenderContext& ctx,bool drawF7,bool drawF8){
         shader.color=previous;
         shader.dirty=true;
     };
-    // Each pass has its own matrix stack. F8 cannot inherit this value from
+    // Each pass has its own matrix stack. F6 cannot inherit this value from
     // an F7-only branch, otherwise its red preview uses a wrong origin.
     auto const& view=ctx.mScreenContext.camera.viewMatrixStack.get().top()._m.get();
     glm::vec3 const cameraWorld{camera.x,camera.y,camera.z};
@@ -557,7 +557,7 @@ void render(BaseActorRenderContext& ctx,bool drawF7,bool drawF8){
                 chunk.gpu->mVertexCount.get().value_or(0u),empty.get(),nullptr);
         }
         } // F7 drawing
-        if(drawF8){
+        if(drawF6){
             std::lock_guard lock(gCaptureMutex);
             auto const service=ctx.mScreenContext.tessellator.mBufferResourceService.lock();
             if(gCaptureService.lock()!=service){
@@ -583,7 +583,7 @@ void render(BaseActorRenderContext& ctx,bool drawF7,bool drawF8){
                     }
                 candidate->gpu=std::make_unique<mce::Mesh>(
                     t.end(Tessellator::UploadMode::Buffered,
-                          "BSC_F8NativeSample",SupplementaryFieldAutoGenerationMode{0}));
+                          "BSC_F6NativeSample",SupplementaryFieldAutoGenerationMode{0}));
                 candidate->gpuSegments=count;
             }
             shader.color=mce::Color{1.f,0.18f,0.22f,1.f};
@@ -621,7 +621,7 @@ void renderActorWireframe(BaseActorRenderContext& ctx,bool drawRed){
         lastReport=Clock::now();
         auto const stats=actorWireframeStats();
         gPreviewMod->getLogger().info(
-            "F7/F8 BlockEntity native wireframe: part_calls={}, with_cpu_geometry={}, "
+            "F7/F6 BlockEntity native wireframe: part_calls={}, with_cpu_geometry={}, "
             "valid_transforms={}, missing_geometry={}, invalid_transforms={}, "
             "total_segments={}, current_pass_segments={}, "
             "actor_data_constructed={}, destroyed={}, buffers_flushed={}, f7={}, f8={}",
@@ -649,7 +649,7 @@ void renderActorWireframe(BaseActorRenderContext& ctx,bool drawRed){
     if(segments.size()>24000)segments.resize(24000);
     auto& shader=ctx.mScreenContext.currentShaderColor;
     auto const previous=shader.color.get();
-    // F8 red = live BlockEntity geometry; F7 amber = same native model
+    // F6 red = live BlockEntity geometry; F7 amber = same native model
     // visualized independently from the ordinary cyan block wireframe.
     shader.color=drawRed?mce::Color{1.f,.18f,.24f,1.f}:
                          mce::Color{1.f,.69f,.14f,1.f};
@@ -703,7 +703,7 @@ LL_TYPE_INSTANCE_HOOK(BSCOverlayHook,ll::memory::HookPriority::Normal,
             {std::lock_guard guard(gResourceMutex);
              gResource=ctx.mScreenContext.tessellator.mBufferResourceService;}
             if(f7)update(ctx);
-            // F8 is an autonomous opaque-pass overlay: it must render even
+            // F6 is an autonomous opaque-pass overlay: it must render even
             // when F7 was never started and no F7 chunks are cached.
             if(f8){
                 renderActorWireframe(ctx,true);
@@ -826,7 +826,7 @@ std::weak_ptr<mce::BufferResourceService> renderBufferService(){
     return gResource;
 }
 bool installPreview(ll::mod::NativeMod& mod){
-    // Idempotent: F7 and F8 can both request the overlay during a session.
+    // Idempotent: F7 and F6 can both request the overlay during a session.
     // Never patch the renderer in LeviLamina's synchronous mod enable path.
     if(gOverlayInstalled)return true;
     gPreviewMod=&mod;
@@ -836,7 +836,7 @@ bool installPreview(ll::mod::NativeMod& mod){
     return gOverlayInstalled;
 }
 void uninstallPreview(){
-    // installPreview can have been skipped entirely (no F7/F8 requested).
+    // installPreview can have been skipped entirely (no F7/F6 requested).
     // Avoid asking the hook framework to undo a hook never installed.
     if(gOverlayInstalled){
         BSCOverlayHook::unhook();

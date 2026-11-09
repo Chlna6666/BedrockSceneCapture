@@ -334,18 +334,18 @@ void updateActorWireframeCamera(Vec3 const& camera){
 bool installActorWireframePartHook(ll::mod::NativeMod& mod){
     if(installed && installedAtPosition)return true;
     if(!installed){
-        mod.getLogger().info("F7/F8 BlockEntity ModelPart::render hook BEGIN");
+        mod.getLogger().info("F7/F6 BlockEntity ModelPart::render hook BEGIN");
         auto const status=BSCActorPartWireHook::hook();
         installed=(status==0);
-        if(installed)mod.getLogger().info("F7/F8 BlockEntity ModelPart::render hook OK");
-        else mod.getLogger().warn("F7/F8 BlockEntity ModelPart::render hook FAILED, hook_status={}",status);
+        if(installed)mod.getLogger().info("F7/F6 BlockEntity ModelPart::render hook OK");
+        else mod.getLogger().warn("F7/F6 BlockEntity ModelPart::render hook FAILED, hook_status={}",status);
     }
     if(!installedAtPosition){
-        mod.getLogger().info("F7/F8 BlockEntity ModelPart::renderAtPosition hook BEGIN");
+        mod.getLogger().info("F7/F6 BlockEntity ModelPart::renderAtPosition hook BEGIN");
         auto const status=BSCActorPartAtPositionWireHook::hook();
         installedAtPosition=(status==0);
-        if(installedAtPosition)mod.getLogger().info("F7/F8 BlockEntity ModelPart::renderAtPosition hook OK");
-        else mod.getLogger().warn("F7/F8 BlockEntity ModelPart::renderAtPosition hook FAILED, hook_status={}",status);
+        if(installedAtPosition)mod.getLogger().info("F7/F6 BlockEntity ModelPart::renderAtPosition hook OK");
+        else mod.getLogger().warn("F7/F6 BlockEntity ModelPart::renderAtPosition hook FAILED, hook_status={}",status);
     }
     return installed || installedAtPosition;
 }

@@ -53,7 +53,7 @@ namespace bsc {
 namespace {
 using Clock=std::chrono::steady_clock;
 // Newer BedrockData headers can declare accessors which no longer have
-// import-library exports. Resolve them at F8 time instead of hard-linking.
+// import-library exports. Resolve them at F6 time instead of hard-linking.
 // Absent symbol => do not dereference unverified graphics state.
 bool graphicsReady(){
     using Accessor=bool& (*)();
@@ -62,8 +62,7 @@ bool graphicsReady(){
     // Bedrock 26.60.x can omit the exported static accessor while its
     // renderer is already live. The active render pass supplies a stronger,
     // lifetime-checked signal than a missing export.
-    if(access)return access();
-    return !renderBufferService().expired();
+    return (access && access()) || !renderBufferService().expired();
 }
 auto graphicsModels() ->
     std::remove_reference_t<decltype(BlockGraphics::mModels())> const* {
@@ -94,10 +93,10 @@ class Writer {
             bool const saved=saveLibrary(task,error);
             if(gMod){
                 if(!saved)
-                    gMod->getLogger().error("F8 model library write failed: {}",error);
+                    gMod->getLogger().error("F6 model library write failed: {}",error);
                 else
                     gMod->getLogger().info(
-                        "F8 model library saved: states={}, static_models={}, actor_models={}, geometry_samples={}, directory={}",
+                        "F6 model library saved: states={}, static_models={}, actor_models={}, geometry_samples={}, directory={}",
                         task.registered,task.staticModels.size(),task.actorModels.size(),
                         task.sampledBlocks,task.directory.string());
             }
@@ -153,10 +152,10 @@ struct Session {
     std::size_t geometryCursor{};
 };
 std::unique_ptr<Session> gSession;
-// A single F8 press can precede the first renderBlockEntities pass. Once
+// A single F6 press can precede the first renderBlockEntities pass. Once
 // the overlay observes a live GPU resource service, resume automatically.
 bool gPendingWorldStart{};
-bool wasF7{},wasF8{},wasF9{},wasMenuF8{},wasMenuF9{};
+bool wasF7{},wasF6{},wasF9{},wasMenuF6{},wasMenuF9{};
 auto& log(){return gMod->getLogger();}
 bool gameFocused(){
     DWORD pid{};
@@ -196,9 +195,9 @@ ControlCommand pollControlCommand(){
     return ControlCommand::None;
 }
 void reportControlStatus(std::string_view mode){
-    log().info("BSC status: mode={}, game_focused={}, F8_key_down={}, graphics_ready={}, F8_active={}, "
+    log().info("BSC status: mode={}, game_focused={}, F6_key_down={}, graphics_ready={}, F6_active={}, "
                "export={}, control={}, pending_world_start={}",
-               mode,gameFocused(),(GetAsyncKeyState(VK_F8)&0x8000)!=0,
+               mode,gameFocused(),(GetAsyncKeyState(VK_F6)&0x8000)!=0,
                graphicsReady(),gSession!=nullptr,
                (gMod->getDataDir()/"export"/TargetGameVersion).string(),
                (gMod->getDataDir()/"control").string(),gPendingWorldStart);
@@ -243,7 +242,7 @@ void finish(bool cancelled) {
     collectNativeSamples(*gSession);
     gSession->library.cancelled=cancelled;
     auto const sceneStatus=nativeSceneDiagnostics();
-    log().info("F8 native-scene coverage: tessellator_calls={}, eligible={}, accepted={}, distinct_block_states={}, distinct_shapes={}, rejected_quota={}, rejected_duplicate={}, rejected_lock_busy={}",
+    log().info("F6 native-scene coverage: tessellator_calls={}, eligible={}, accepted={}, distinct_block_states={}, distinct_shapes={}, rejected_quota={}, rejected_duplicate={}, rejected_lock_busy={}",
                sceneStatus.tessellatorCalls,sceneStatus.eligibleCalls,
                sceneStatus.acceptedCalls,sceneStatus.distinctBlockStates,
                sceneStatus.distinctShapes,sceneStatus.rejectedQuota,
@@ -255,17 +254,17 @@ void finish(bool cancelled) {
         sceneStatus.distinctBlockStates,sceneStatus.distinctShapes
     };
     auto actorStatus=actorCaptureDiagnostics();
-    log().info("F8 BlockActor hooks: chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
+    log().info("F6 BlockActor hooks: chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
                actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
                actorStatus.hooksInstalled[2],actorStatus.hooksInstalled[3],
                actorStatus.hooksInstalled[4],actorStatus.hooksInstalled[5],
                actorStatus.hooksInstalled[6],
                actorStatus.capturedModels,actorStatus.observedWithoutGeometry.size());
-    log().info("F8 native box construction hooks: add_box={}, load_boxes={}, compile_cubes={}, retained_parts={}, source_boxes={}",
+    log().info("F6 native box construction hooks: add_box={}, load_boxes={}, compile_cubes={}, retained_parts={}, source_boxes={}",
                actorStatus.sourceAddBoxHook,actorStatus.sourceLoadBoxesHook,
                actorStatus.sourceCompileCubesHook,actorStatus.retainedSourceParts,actorStatus.retainedSourceBoxes);
     for(auto const& label:actorStatus.observedWithoutGeometry)
-        log().warn("F8 BlockActor renderer observed but no valid native model geometry: {}",label);
+        log().warn("F6 BlockActor renderer observed but no valid native model geometry: {}",label);
     auto directory=gSession->library.directory;
     auto registered=gSession->library.registered;
     auto sampled=gSession->library.sampledBlocks;
@@ -274,10 +273,10 @@ void finish(bool cancelled) {
     auto data=std::move(gSession->library);
     gSession.reset();
     if (!gWriter.submit(std::move(data))) {
-        log().error("F8 export writer queue full; model library not submitted");
+        log().error("F6 export writer queue full; model library not submitted");
         return;
     }
-    log().info("F8 registry states={}, geometry samples={}, static models={}, actor models={}, cancelled={}; writing {}",
+    log().info("F6 registry states={}, geometry samples={}, static models={}, actor models={}, cancelled={}; writing {}",
                registered,sampled,staticCount,actorCount,cancelled,directory.string());
 }
 void begin(LocalPlayer* player) {
@@ -287,31 +286,31 @@ void begin(LocalPlayer* player) {
     if(player && !graphicsReady()){
         if(!installPreview(*gMod)){
             gPendingWorldStart=false;
-            log().warn("F8: graphics readiness unavailable; render hook installation failed");
+            log().warn("F6: graphics readiness unavailable; render hook installation failed");
             return;
         }
         if(!graphicsReady()){
             if(!gPendingWorldStart)
-                log().info("F8: waiting for first in-world render pass; capture will start automatically");
+                log().info("F6: waiting for first in-world render pass; capture will start automatically");
             gPendingWorldStart=true;
             return;
         }
     }
     gPendingWorldStart=false;
     if(!graphicsReady()){
-        log().warn("F8: graphics resources not yet confirmed; enter a world to export native geometry");
+        log().warn("F6: graphics resources not yet confirmed; enter a world to export native geometry");
         return;
     }
     if(gSession) finish(true);
     clearNativeObservations();
     setCapturePreviewEnabled(false);
     if(player){
-        log().info("F8: installing red native-scene overlay on demand");
+        log().info("F6: installing red native-scene overlay on demand");
         if(!installPreview(*gMod))
-            log().warn("F8 red overlay unavailable; model export continues");
-        log().info("F8: initializing native hooks on demand (not during LeviLamina startup)");
+            log().warn("F6 red overlay unavailable; model export continues");
+        log().info("F6: initializing native hooks on demand (not during LeviLamina startup)");
         if(!installNativeObservations(*gMod))
-            log().warn("F8: BlockTessellator hook unavailable; registry capture can still run");
+            log().warn("F6: BlockTessellator hook unavailable; registry capture can still run");
     }
     auto session=std::make_unique<Session>();
     session->library.directory=gMod->getDataDir()/"export"/TargetGameVersion;
@@ -323,7 +322,7 @@ void begin(LocalPlayer* player) {
     session->player=player;
     // Use every registered permutation, not just the states present in loaded chunks.
     auto const& types=BlockTypeRegistry::get().mBlockLookupMap.get();
-    // Expand registered permutations incrementally rather than blocking F8 startup.
+    // Expand registered permutations incrementally rather than blocking F6 startup.
     for(auto const& [name,type]:types)
         if(type)session->registrationTypes.emplace_back(type.get());
     {
@@ -334,22 +333,22 @@ void begin(LocalPlayer* player) {
             for(auto const& [name,model]:*models)
                 if(model)session->geometryModels.emplace_back(name);
     }
-    log().info("F8 native registry snapshot: block_types={}, static_geometry_definitions={}",
+    log().info("F6 native registry snapshot: block_types={}, static_geometry_definitions={}",
                session->registrationTypes.size(),session->geometryModels.size());
     if(session->geometryModels.empty())
-        log().warn("F8: native BlockGraphics model registry is empty; static_geometry_models will remain zero unless the renderer populates it");
+        log().warn("F6: native BlockGraphics model registry is empty; static_geometry_models will remain zero unless the renderer populates it");
     if(session->registrationTypes.empty()){
-        log().error("F8: no registered block permutations found");
+        log().error("F6: no registered block permutations found");
         return;
     }
     gWriter.start();
-    log().info("F8 registry-only model capture: block types={}, no chunk I/O, output={}",
+    log().info("F6 registry-only model capture: block types={}, no chunk I/O, output={}",
                session->registrationTypes.size(),session->library.directory.string());
     gSession=std::move(session);
     armNativeObservations(player!=nullptr);
     setCapturePreviewEnabled(player!=nullptr);
     if(player){
-        log().info("F8: reconstructing built-in CPU model definitions for missing BlockEntity geometries");
+        log().info("F6: reconstructing built-in CPU model definitions for missing BlockEntity geometries");
         captureBuiltInModelTemplates(*gMod);
     }
 }
@@ -633,7 +632,7 @@ void registerStates(Session& s,Clock::time_point started) {
     if(s.typeCursor>=s.registrationTypes.size() && !s.audioAliasesReported){
         s.audioAliasesReported=true;
         if(s.audioOnlyStatesAliased)
-            log().info("F8: {} audio-only note states share canonical visual meshes",s.audioOnlyStatesAliased);
+            log().info("F6: {} audio-only note states share canonical visual meshes",s.audioOnlyStatesAliased);
     }
 }
 void registerNativeGeometry(Session& s,Clock::time_point start) {
@@ -654,7 +653,7 @@ void advance(Session& s) {
     // Renderer reload can invalidate BlockGraphics and atlas pointers during
     // a multi-tick export. Abort before touching those pointers.
     if(!graphicsReady()){
-        log().warn("F8: native block graphics unloaded during export");
+        log().warn("F6: native block graphics unloaded during export");
         finish(true);
         return;
     }
@@ -668,7 +667,7 @@ void advance(Session& s) {
         return;
     }
     if(!s.geometryModels.empty() && !s.monitoringReported)
-        log().info("F8 static geometry catalog: definitions={}, serialized={}",
+        log().info("F6 static geometry catalog: definitions={}, serialized={}",
                    s.geometryModels.size(),s.library.staticModels.size());
     if(s.player){
         if(s.saveRequested){finish(false);return;}
@@ -677,7 +676,7 @@ void advance(Session& s) {
         collectNativeSamples(s);
         if(!s.monitoringReported){
             s.monitoringReported=true;
-            log().info("F8: registered states ready; visit dynamic blocks, press F8 again to save, F9 to cancel");
+            log().info("F6: registered states ready; visit dynamic blocks, press F6 again to save, F9 to cancel");
         }
     }else finish(false);
 }
@@ -708,20 +707,20 @@ void onTick(LocalPlayer& player) {
     static bool tickReported=false;
     if(!tickReported){
         tickReported=true;
-        log().info("BSC local-player tick hook active; F7/F8/F9 need game focus. "
+        log().info("BSC local-player tick hook active; F7/F6/F9 need game focus. "
                    "Remote fallback: create start.flag/save.flag/cancel.flag/status.flag under {}",
                    (gMod->getDataDir()/"control").string());
     }
     auto const command=pollControlCommand();
     bool focus=gameFocused();
     bool f7=focus&&(GetAsyncKeyState(VK_F7)&0x8000);
-    bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);
+    bool f6=focus&&(GetAsyncKeyState(VK_F6)&0x8000);
     bool f9=focus&&(GetAsyncKeyState(VK_F9)&0x8000);
     bool toggle=(f7&&!wasF7)||command==ControlCommand::Preview;
-    bool start=(f8&&!wasF8)||command==ControlCommand::Start;
+    bool start=(f6&&!wasF6)||command==ControlCommand::Start;
     bool save=command==ControlCommand::Save;
     bool cancel=(f9&&!wasF9)||command==ControlCommand::Cancel;
-    wasF7=f7;wasF8=f8;wasF9=f9;
+    wasF7=f7;wasF6=f6;wasF9=f9;
     if(toggle){
         bool const on=!gPreviewEnabled.load();
         if(on){
@@ -742,10 +741,10 @@ void onTick(LocalPlayer& player) {
         if(cancel){
             if(gPendingWorldStart){
                 gPendingWorldStart=false;
-                log().info("F8: pending capture cancelled");
+                log().info("F6: pending capture cancelled");
             }
             if(gSession)finish(true);
-            else log().info("BSC cancel requested, no active F8 capture");
+            else log().info("BSC cancel requested, no active F6 capture");
             return;
         }
         if(start||save){
@@ -753,29 +752,29 @@ void onTick(LocalPlayer& player) {
                 if(gSession->typeCursor<gSession->registrationTypes.size() ||
                    gSession->geometryCursor<gSession->geometryModels.size()){
                     gSession->saveRequested=true;
-                    log().info("F8: save requested; finishing full registry enumeration before writing");
+                    log().info("F6: save requested; finishing full registry enumeration before writing");
                 }else{
-                    log().info("F8: native scene observation finished, committing captured models");
+                    log().info("F6: native scene observation finished, committing captured models");
                     finish(false);
                 }
             }else if(start){
-                log().info("F8: registry and native-scene model capture started ({})",
+                log().info("F6: registry and native-scene model capture started ({})",
                            command==ControlCommand::Start?"external control":"hotkey");
                 begin(&player);
             }else{
-                log().warn("BSC save requested without an active F8 capture");
+                log().warn("BSC save requested without an active F6 capture");
             }
             return;
         }
         if(gPendingWorldStart && graphicsReady()){
-            log().info("F8: live renderer resources observed; starting deferred capture");
+            log().info("F6: live renderer resources observed; starting deferred capture");
             begin(&player);
         }
         if(!gSession)return;
         if(gSession->player!=&player){finish(true);return;}
         advance(*gSession);
     }catch(std::exception const& e){
-        log().error("F8 resource enumeration failed: {}",e.what());
+        log().error("F6 resource enumeration failed: {}",e.what());
         finish(true);
     }
 }
@@ -785,7 +784,7 @@ void onMenuUpdate(MinecraftGame& game){
         // gsl::not_null wraps a Bedrock::NonOwnerPointer.
         auto* client=game.getPrimaryClientInstance().get().get();
         if(client && client->getLocalPlayer()){
-            wasMenuF8=false;wasMenuF9=false;
+            wasMenuF6=false;wasMenuF9=false;
             return; // World controls are polled from LocalPlayer tick.
         }
     }
@@ -793,16 +792,16 @@ void onMenuUpdate(MinecraftGame& game){
         finish(true); // World closed.
     if(gPendingWorldStart){
         gPendingWorldStart=false;
-        log().info("F8: pending in-world capture cancelled (world closed)");
+        log().info("F6: pending in-world capture cancelled (world closed)");
     }
     auto const command=pollControlCommand();
     bool focus=gameFocused();
-    bool f8=focus&&(GetAsyncKeyState(VK_F8)&0x8000);
+    bool f6=focus&&(GetAsyncKeyState(VK_F6)&0x8000);
     bool f9=focus&&(GetAsyncKeyState(VK_F9)&0x8000);
-    bool start=(f8&&!wasMenuF8)||command==ControlCommand::Start;
+    bool start=(f6&&!wasMenuF6)||command==ControlCommand::Start;
     bool save=command==ControlCommand::Save;
     bool cancel=(f9&&!wasMenuF9)||command==ControlCommand::Cancel;
-    wasMenuF8=f8;wasMenuF9=f9;
+    wasMenuF6=f6;wasMenuF9=f9;
     try{
         if(command==ControlCommand::Status)reportControlStatus("menu");
         if(command==ControlCommand::Preview)
@@ -812,20 +811,20 @@ void onMenuUpdate(MinecraftGame& game){
             return;
         }
         if(start){
-            log().info("F8: definition-only export from menu ({})",
+            log().info("F6: definition-only export from menu ({})",
                        command==ControlCommand::Start?"external control":"hotkey");
             begin(nullptr);
             return;
         }
         if(save){
             if(gSession && !gSession->player){
-                log().info("F8 menu export save requested; finish current registry scan first");
+                log().info("F6 menu export save requested; finish current registry scan first");
                 gSession->saveRequested=true;
             }else log().warn("BSC save requested without an active menu export");
         }
         if(gSession && !gSession->player)advance(*gSession);
     }catch(std::exception const& e){
-        log().error("F8 menu export failed: {}",e.what());
+        log().error("F6 menu export failed: {}",e.what());
         if(gSession && !gSession->player)finish(true);
     }
 }

@@ -4,19 +4,19 @@ LeviLamina 26.60.5（Bedrock SDK 26.60.5-client.12）**客户端**原生模组�
 
 ## 功能
 
-- **F8 — 注册表与场景快照**：主菜单 F8 直接导出注册表；在游戏世界内首次 F8 开始导出和被动观察原生几何，再按 F8 保存，F9 取消。不会主动遍历已加载区块，但会读取正在渲染方块的 3×3×3 邻居状态。
+- **F6 — 注册表与场景快照**：主菜单 F6 直接导出注册表；在游戏世界内首次 F6 开始导出和被动观察原生几何，再按 F6 保存，F9 取消。不会主动遍历已加载区块，但会读取正在渲染方块的 3×3×3 邻居状态。
 - **原生静态 BlockGeometry**：保留模型名称、父模型、元素、立方体、六个面、局部 UV、旋转、纹理映射。输出 `geometry_catalog.json`；BlockState 与该目录之间尚不存在经过验证的全量一一映射。
 - **CPU 直接构建网格**：对原生 `BlockShape::Block`、`SlimeBlock` 的可视 AABB 生成六面带法线三角形；对 `CrossTexture`、`DoublesidedCrossTexture`、`DoublesidedWideCrossTexture` 生成双面交叉平面。均在主线程分帧构建、全程不使用 GPU、不读 ChunkSource。具有相同可视边界、渲染层与形状的网格在内存中共享，磁盘按 SHA-256 去重。
-- **真实渲染场景**：Hook 原生 `BlockTessellator::tessellateInWorld`，只在 F8 录制期间截取楼梯、栅栏、墙、流体等实际输出的几何；状态签名保存中心及 26 邻居的本次游戏注册网络 ID，`native_scene` 仅保证已观察到的邻居排列。无观察样本时不声称精确覆盖。
+- **真实渲染场景**：Hook 原生 `BlockTessellator::tessellateInWorld`，只在 F6 录制期间截取楼梯、栅栏、墙、流体等实际输出的几何；状态签名保存中心及 26 邻居的本次游戏注册网络 ID，`native_scene` 仅保证已观察到的邻居排列。无观察样本时不声称精确覆盖。
 - **专用 BlockActor**：Hook 箱子、告示牌、悬挂告示牌、床、潜影盒、钟的渲染入口；提取原生 `ModelPart`、`Cube`、骨骼层级与每面 UV，保存到 `entities.json` 和哈希命名模型文件。旧式 Box UV 按 Bedrock 六面展开为纹理像素坐标；缺少有效 UV 的模型不再标为完整，床支持尝试构造模板补采。动画姿态和文本暂不导出。
-- **F7 — 世界调试线框**：仍依赖游戏已加载区块。与 F8 无区块模型库是两条独立链路。
-- **F9 — 取消 F8**：在清单里标记取消，不谎报完成。
+- **F7 — 世界调试线框**：仍依赖游戏已加载区块。与 F6 无区块模型库是两条独立链路。
+- **F9 — 取消 F6**：在清单里标记取消，不谎报完成。
 
 ## 与 BMCBL 贴图拼接
 
 BMCBL 的 `crates/bedrock-block-model` 已解析 `blocks.json`、`terrain_texture.json`、资源包几何；`ObjTextureResolver` 负责纹理解析。因此不导出 `textures/`，不复制图集和 GPU 材质。
 
-F8 输出目录：`BedrockSceneCapture/export/1.26.60.5/`。
+F6 输出目录：`BedrockSceneCapture/export/1.26.60.5/`。
 
 - `blocks.json`：每个 BlockState 的 `native_block_shape`、`geometry_context`（例如 `stairs_corner_neighbors`、`fluid_neighbors`、`horizontal_connections`）、`visual_bounds`、`visual_bounds_mesh_generated`、`texture_bindings[].resource_alias`，以及 `variants[].mesh_refs`、逐三角形 `mesh_triangle_texture_slots`。
 - `meshes/<sha256>.json`：去重网格。`uv_space=block_face_local` 表示 UV 在方块面本地空间，绝对不能当作动态地形图集坐标；`face_index_per_triangle` 与 `face_order` 明确六面拼接顺序（上、下、北、南、西、东）。交叉平面只使用第一个纹理槽，正反面分别提供几何。
@@ -35,11 +35,11 @@ Windows x64，LLVM clang-cl 22 + xmake：
 pwsh -NoProfile -File tools/build_client.ps1
 ```
 
-或直接运行 `xmake f -p windows -a x64 -m release -y` 与 `xmake -y -v`。CI 执行 Windows x64 模组编译、打包校验，及 Linux 模型索引格式自测。构建通过不代表已完成实际游戏中的 F7/F8 功能验证。
+或直接运行 `xmake f -p windows -a x64 -m release -y` 与 `xmake -y -v`。CI 执行 Windows x64 模组编译、打包校验，及 Linux 模型索引格式自测。构建通过不代表已完成实际游戏中的 F7/F6 功能验证。
 
-## Remote desktop / F8 input fallback
+## Remote desktop / F6 input fallback
 
-The normal F7/F8/F9 hotkeys are polled only when the Minecraft window is the foreground process.
+The normal F7/F6/F9 hotkeys are polled only when the Minecraft window is the foreground process.
 RDP, remote-control software, virtual keyboards and Fn-key interception can make them unreliable.
 
 For a reliable input-independent option, find the full **BSC remote control directory**
@@ -49,7 +49,7 @@ create an **empty marker file** in that directory:
 | File | Action |
 |---|---|
 | `status.flag` | Log game/menu hook activity, focus, key detection and capture state |
-| `start.flag` | Start F8 registry export / in-world native observation |
+| `start.flag` | Start F6 registry export / in-world native observation |
 | `save.flag` | Save an active world observation (waits for registry enumeration to finish) |
 | `cancel.flag` | Cancel an active capture |
 | `preview.flag` | Toggle F7 wireframe visualization in world |

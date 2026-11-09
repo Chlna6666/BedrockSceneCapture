@@ -102,7 +102,7 @@ bool fullBoundsCubeCandidate(BlockGraphics const& gfx){
 }
 // BlockShape::Block and a 1x1x1 *visual bound* do NOT prove that a block
 // tessellates as a complete six-face cube. Keep a separately bounded sample
-// budget for those candidates, but do not exclude them from F8 entirely.
+// budget for those candidates, but do not exclude them from F6 entirely.
 bool mayVaryByPosition(BlockShape shape){
     // Crossed plants may have deterministic per-position offsets or varying
     // orientation even with identical block state and 3x3x3 neighborhood.
@@ -566,7 +566,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     });
 }
 // Capture at construction time: numerous BlockActor models retain only a
-// compiled render mesh by the time the F8 observation begins.
+// compiled render mesh by the time the F6 observation begins.
 LL_TYPE_INSTANCE_HOOK(BSCPartAddBoxHook,ll::memory::HookPriority::Normal,
     ModelPart,ll::memory::SymbolView{"?addBox@ModelPart@@QEAAXAEBVVec3@@0_NMAEBVColor@mce@@@Z"},void,
     Vec3 const& originPos,Vec3 const& extents,bool mirror,float inflate,
@@ -938,17 +938,17 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
     auto& logger=mod.getLogger();
     auto install=[&](char const* label,bool& installed,auto patch){
         if(installed)return;
-        logger.info("F8 native hook install BEGIN: {}",label);
+        logger.info("F6 native hook install BEGIN: {}",label);
         auto const status=patch();
         installed=(status==0);
-        if(installed)logger.info("F8 native hook install OK: {}",label);
-        else logger.warn("F8 native hook install FAILED: {}, hook_status={}",label,status);
+        if(installed)logger.info("F6 native hook install OK: {}",label);
+        else logger.warn("F6 native hook install FAILED: {}, hook_status={}",label,status);
     };
     install("BlockTessellator::tessellateInWorld",installedWorld,
         []{return BSCNativeBlockHook::hook();});
-    // F8 red preview and F7 amber preview consume the same live CPU geometry.
+    // F6 red preview and F7 amber preview consume the same live CPU geometry.
     // Hooking only renderer-specific model collectors could never produce a
-    // complete F8 red BlockEntity preview.
+    // complete F6 red BlockEntity preview.
     installActorWireframePartHook(mod);
     installActorRenderHooks(mod);
     install("ModelPart::addBox",installedPartAdd,
@@ -957,7 +957,7 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
         []{return BSCPartLoadBoxesHook::hook();});
     install("ModelPart::compileCubes",installedPartCompile,
         []{return BSCPartCompileCubesHook::hook();});
-    logger.info("F8 native hooks initialized: world={}, actors={}/7, source_box_hooks={}/3",
+    logger.info("F6 native hooks initialized: world={}, actors={}/7, source_box_hooks={}/3",
         installedWorld,
         static_cast<int>(installedChest)+static_cast<int>(installedSign)+
         static_cast<int>(installedHanging)+static_cast<int>(installedBed)+
@@ -973,7 +973,7 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod){
     // Instantiating them would also require unresolved Model vtables and
     // AppPlatformListener methods. Capture the live renderer and its
     // ModelPart hooks instead; never generate fake models from AABBs.
-    mod.getLogger().info("F8: native built-in model constructors unavailable on 26.60.5; relying on live renderer observation");
+    mod.getLogger().info("F6: native built-in model constructors unavailable on 26.60.5; relying on live renderer observation");
 }
 
 NativeSceneDiagnostics nativeSceneDiagnostics(){
@@ -1033,8 +1033,8 @@ void clearNativeObservations(){
     pending.clear();
     actorModels.clear();
     // Source-box keys are raw ModelPart addresses. Never carry an address
-    // from a previous F8 session into a newly constructed model instance.
-    // All explicit F8 built-in templates are reconstructed after arming.
+    // from a previous F6 session into a newly constructed model instance.
+    // All explicit F6 built-in templates are reconstructed after arming.
     {
         std::lock_guard sourceLock(sourceBoxesMutex);
         sourceBoxes.clear();
