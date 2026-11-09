@@ -1,6 +1,6 @@
-# BedrockSceneCapture — Bedrock 1.26.51.1
+# BedrockSceneCapture — Bedrock 1.26.60.5
 
-LeviLamina 26.51.9 **客户端**原生模组，目标为 BMCBL 3D 编辑器导出离线几何，而不是复制整个世界或贴图。
+LeviLamina 26.60.5（Bedrock SDK 26.60.5-client.12）**客户端**原生模组，目标为 BMCBL 3D 编辑器导出离线几何，而不是复制整个世界或贴图。
 
 ## 功能
 
@@ -16,7 +16,7 @@ LeviLamina 26.51.9 **客户端**原生模组，目标为 BMCBL 3D 编辑器导�
 
 BMCBL 的 `crates/bedrock-block-model` 已解析 `blocks.json`、`terrain_texture.json`、资源包几何；`ObjTextureResolver` 负责纹理解析。因此不导出 `textures/`，不复制图集和 GPU 材质。
 
-F8 输出目录：`BedrockSceneCapture/export/1.26.51.1/`。
+F8 输出目录：`BedrockSceneCapture/export/1.26.60.5/`。
 
 - `blocks.json`：每个 BlockState 的 `native_block_shape`、`geometry_context`（例如 `stairs_corner_neighbors`、`fluid_neighbors`、`horizontal_connections`）、`visual_bounds`、`visual_bounds_mesh_generated`、`texture_bindings[].resource_alias`，以及 `variants[].mesh_refs`、逐三角形 `mesh_triangle_texture_slots`。
 - `meshes/<sha256>.json`：去重网格。`uv_space=block_face_local` 表示 UV 在方块面本地空间，绝对不能当作动态地形图集坐标；`face_index_per_triangle` 与 `face_order` 明确六面拼接顺序（上、下、北、南、西、东）。交叉平面只使用第一个纹理槽，正反面分别提供几何。
