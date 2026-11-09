@@ -977,10 +977,23 @@ LL_TYPE_INSTANCE_HOOK(BSCChestModelHook,ll::memory::HookPriority::Normal,
     origin(ctx,data);
     auto const& small=this->mChestModel.get();
     auto const& large=this->mLargeChestModel.get();
+    NativeTextureResources smallTextures,largeTextures;
+    addActorColor(smallTextures,"normal",this->normalTex.get());
+    addActorColor(smallTextures,"trapped",this->trappedTex.get());
+    addActorColor(smallTextures,"ender",this->enderTex.get());
+    addActorColor(largeTextures,"large",this->largeTex.get());
+    addActorColor(largeTextures,"trapped_large",this->trappedLargeTex.get());
+    for(std::size_t i=0;i<4;++i){
+        auto const type=static_cast<CopperType>(i);
+        addActorColor(smallTextures,"copper_"+std::to_string(i),
+                      this->mCopperTextures.get()[type]);
+        addActorColor(largeTextures,"copper_large_"+std::to_string(i),
+                      this->mLargeCopperTextures.get()[type]);
+    }
     recordActor("chest_normal",small,
-        {&small.mLid.get(),&small.mBottom.get(),&small.mLock.get()});
+        {&small.mLid.get(),&small.mBottom.get(),&small.mLock.get()},smallTextures);
     recordActor("chest_large",large,
-        {&large.mLid.get(),&large.mBottom.get(),&large.mLock.get()});
+        {&large.mLid.get(),&large.mBottom.get(),&large.mLock.get()},largeTextures);
 }
 LL_TYPE_INSTANCE_HOOK(BSCSignModelHook,ll::memory::HookPriority::Normal,
     SignRenderer,&SignRenderer::$render,void,
@@ -988,7 +1001,11 @@ LL_TYPE_INSTANCE_HOOK(BSCSignModelHook,ll::memory::HookPriority::Normal,
     ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& model=this->mSignModel.get();
-    recordActor("standing_sign",model,{&model.mCube.get(),&model.mCube2.get()});
+    NativeTextureResources resources;
+    addActorColor(resources,"default",this->mSignTex.get());
+    for(auto const& [type,texture]:this->mTextureMap.get())
+        addActorColor(resources,"sign_type_"+std::to_string(static_cast<int>(type)),texture);
+    recordActor("standing_sign",model,{&model.mCube.get(),&model.mCube2.get()},resources);
 }
 LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
     HangingSignRenderer,&HangingSignRenderer::$render,void,
@@ -996,10 +1013,14 @@ LL_TYPE_INSTANCE_HOOK(BSCHangingSignModelHook,ll::memory::HookPriority::Normal,
     ActorWireframeScope wireScope{ctx,data};
     origin(ctx,data);
     auto const& model=this->mHangingSignModel.get();
+    NativeTextureResources resources;
+    addActorColor(resources,"default",this->mSignTex.get());
+    for(auto const& [type,texture]:this->mTextureMap.get())
+        addActorColor(resources,"hanging_sign_type_"+std::to_string(static_cast<int>(type)),texture);
     recordActor("hanging_sign",model,
         {&model.mPlank.get(),&model.mBoard.get(),&model.mVChain.get(),
          &model.mChainL1.get(),&model.mChainL2.get(),
-         &model.mChainR1.get(),&model.mChainR2.get()});
+         &model.mChainR1.get(),&model.mChainR2.get()},resources);
 }
 LL_TYPE_INSTANCE_HOOK(BSCPistonArmModelHook,ll::memory::HookPriority::Normal,
     PistonBlockActorRenderer,&PistonBlockActorRenderer::$render,void,
