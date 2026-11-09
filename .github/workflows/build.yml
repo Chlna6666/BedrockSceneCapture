@@ -40,6 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          # Avoid transient GitHub release CDN 504 for xmake 3.1.2.
+          xmake-version: '3.1.1'
       - name: Use preinstalled clang-cl without GitHub LLVM download
         shell: pwsh
         run: |
