@@ -142,8 +142,8 @@ void reset() {
 }
 Vec3 cameraPosition(BaseActorRenderContext const& ctx){
     // Camera::mPosition is (0,0,0) in the BlockEntity render pass on
-    // Bedrock 1.26.51.1. Its origin is NOT the world-space player camera.
-    // Use the render-context camera (the origin used for world-relative
+    // Bedrock 1.26.51.1. Revalidate on newer versions; never assume
+    // the zero vector is a valid world-space player camera. Use the render-context
     // BlockEntity geometry) so F7 lines receive exactly one subtraction.
     auto const& impl=ctx.mImpl.get();
     if(impl){
@@ -375,8 +375,8 @@ void update(BaseActorRenderContext& ctx){
     }
 }
 bool visible(BaseActorRenderContext& ctx,ChunkWire const& chunk,Vec3 const& camera) {
-    // SDK 26.51.9 Frustum::cubeInFrustum is marked unavailable. Use the
-    // engine camera basis and a conservative chunk bounding sphere instead.
+    // SDK 26.51.9 marked Frustum::cubeInFrustum unavailable. Retain the
+    // conservative camera-basis culling unless the new API is verified.
     auto const& cam=ctx.mScreenContext.camera;
     float const cx=static_cast<float>(chunk.x*16+8)-camera.x;
     float const cy=(static_cast<float>(chunk.minY)+static_cast<float>(chunk.maxY))*0.5f-camera.y;

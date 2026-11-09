@@ -28,6 +28,15 @@ def verify() -> None:
             raise SystemExit(
                 f"Invalid packaged manifest {field}: {data.get(field)!r}, expected {value!r}"
             )
+    # Catch mixed SDK/package revisions before publishing a client DLL.
+    expected_game = "1.26.60.5"
+    expected_loader = "26.60.*"
+    tooth = json.loads((ROOT / "tooth.json").read_text(encoding="utf-8"))
+    dependency = tooth["variants"][0]["dependencies"]["github.com/LiteLDev/LeviLamina#client"]
+    if dependency != expected_loader:
+        raise SystemExit(f"Client dependency {dependency!r} does not match {expected_loader!r}")
+    if expected_game not in data.get("description", ""):
+        raise SystemExit(f"Packaged manifest must identify Bedrock {expected_game}")
     dll = PACKAGE / expected["entry"]
     if not dll.is_file() or dll.stat().st_size == 0:
         raise SystemExit(f"Missing or empty packaged DLL: {dll}")

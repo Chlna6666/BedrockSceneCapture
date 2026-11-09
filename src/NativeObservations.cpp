@@ -187,7 +187,7 @@ std::string modelJson(Model const& model,
         bool firstCube=true;
         for(auto const& cube:part->mCubes.get()){
             auto const& size=cube.mSize.get();
-            // Some 1.26.51.1 renderers hold compiled Cube polygons but expose
+            // Some 26.51-era renderers held compiled Cube polygons but exposed
             // zero mSize through this SDK. Never serialize them as real boxes.
             if(!std::isfinite(size.x)||!std::isfinite(size.y)||!std::isfinite(size.z) ||
                size.x==0.f||size.y==0.f||size.z==0.f){
@@ -924,7 +924,7 @@ void installActorRenderHooks(ll::mod::NativeMod& mod){
 }
 bool installActorWireframeObservations(ll::mod::NativeMod& mod){
     // The old BlockActorRenderData constructor hook executed millions of
-    // times while its destructor hook never fired on 26.51.9. This leaked
+    // times while its destructor hook never fired on SDK 26.51.9. This leaked
     // nested context scopes indefinitely. Only use tightly paired RAII
     // renderer hooks; do not hook native constructor/destructor lifetimes.
     installActorRenderHooks(mod);

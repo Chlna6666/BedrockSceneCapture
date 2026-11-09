@@ -23,7 +23,7 @@ def validate(root: Path):
     manifest,blocks,entities,materials,coverage,static,pool=(docs[n] for n in DOCS)
     states=blocks.get("blocks",[])
     if not isinstance(states,list):return {"valid":False,"errors":["invalid block list"]}
-    if manifest.get("target_game_version")!="1.26.51.1":errors.append("game version")
+    if manifest.get("target_game_version")!="1.26.60.5":errors.append("game version")
     if manifest.get("shared_geometry_pool_schema")!=2 or pool.get("schema")!=2:
         errors.append("v2 schema required")
     if manifest.get("legacy_meshes_retained") is not False or pool.get("legacy_meshes_retained") is not False:
@@ -225,7 +225,7 @@ def self_test():
         a=add("appearance",appearance)
         m=add("materials",{"schema":2,"texture_bindings":[{"slot":2,"resource_alias":"stone"}]})
         files={
-            "manifest.json":{"target_game_version":"1.26.51.1","registered_block_states":1,
+            "manifest.json":{"target_game_version":"1.26.60.5","registered_block_states":1,
                              "static_geometry_models":0,"captured_block_actor_models":0,
                              "textures_exported":False,"shared_geometry_pool_schema":2,
                              "legacy_meshes_retained":False,"shared_geometry_count":1,
