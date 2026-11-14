@@ -46,12 +46,15 @@ struct ActorCaptureDiagnostics {
     // claim that the corresponding UV mesh was successfully exported.
     std::uint32_t observedRendererMask{};
     std::size_t capturedModels{};
+    // An exported but incomplete UV model is not a missing model.
+    std::size_t completeModels{},incompleteModels{};
     bool sourceAddBoxHook{};
     bool sourceLoadBoxesHook{};
     bool sourceCompileCubesHook{};
     std::size_t retainedSourceParts{};
     std::size_t retainedSourceBoxes{};
     std::vector<std::string> observedWithoutGeometry;
+    std::vector<std::string> observedIncompleteGeometry;
 };
 ActorCaptureDiagnostics actorCaptureDiagnostics();
 // Install after LeviLamina enables mods, never inside DllMain. Snapshots are

@@ -128,7 +128,6 @@ std::atomic<std::uint64_t> tessellatorCalls{0};
 std::atomic<std::uint64_t> eligibleCalls{0};
 std::atomic<std::uint64_t> acceptedCalls{0};
 std::atomic<std::uint64_t> rejectedQuota{},rejectedDuplicate{},rejectedLockBusy{};
-std::unordered_set<std::string> recordedActorLabels;
 std::unordered_map<std::string,std::chrono::steady_clock::time_point> actorLastAttempt;
 constexpr std::size_t MaxTotalVertices=2'000'000;
 std::size_t recordedVertices{};
@@ -346,13 +345,6 @@ std::string modelJson(Model const& model,
             for(auto const& quad:quads)for(auto const& v:quad)
                 if(!validVertex(v))valid=false;
         }
-        if(!tris.empty()||!quads.empty()){
-            bool const hasUV=!uvs.empty() &&
-                std::all_of(uvs.begin(),uvs.end(),[](auto const& uv){
-                    return std::isfinite(uv.x)&&std::isfinite(uv.y);
-                });
-            if(!hasUV)++incompleteNativeUVs;
-        }
         if(valid && (!tris.empty()||!quads.empty())){
             polyFaces+=tris.size()+quads.size();
             o<<",\"poly_mesh\":{\"positions\":[";
@@ -432,7 +424,6 @@ void recordActor(char const* label,Model const& model,
     }else{
         models.emplace(label,std::move(json));
     }
-    if(!prewarming)recordedActorLabels.emplace(label);
 }
 
 void recordRendererModel(BlockActorRenderDispatcher& dispatcher,
@@ -1355,9 +1346,33 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
     diagnostics.implicitDispatcherHook=installedImplicitDispatch;
     diagnostics.observedRendererMask=observedRendererMask.load(std::memory_order_relaxed);
     std::lock_guard lock(mutex);
-    diagnostics.capturedModels=actorModels.size();
-    for(auto const& [name,json]:startupActorModels)
-        if(!actorModels.contains(name))++diagnostics.capturedModels;
+    // A startup snapshot remains a captured model even if a later live
+    // inspection fails to recover its CPU geometry or UV data.
+    std::unordered_set<std::string> available;
+    available.reserve(actorModels.size()+startupActorModels.size());
+    for(auto const& [name,json]:startupActorModels)available.insert(name);
+    for(auto const& [name,json]:actorModels)available.insert(name);
+    diagnostics.capturedModels=available.size();
+    auto complete=[](std::string const& json){
+        return json.find("\"geometry_complete\":true")!=std::string::npos;
+    };
+    for(auto const& name:available){
+        auto const runtime=actorModels.find(name);
+        auto const startup=startupActorModels.find(name);
+        bool const valid=(runtime!=actorModels.end() && complete(runtime->second)) ||
+            (startup!=startupActorModels.end() && complete(startup->second));
+        if(valid)++diagnostics.completeModels;
+        else {
+            ++diagnostics.incompleteModels;
+            if(actorLastAttempt.contains(name))
+                diagnostics.observedIncompleteGeometry.push_back(name);
+        }
+    }
+    for(auto const& [label,lastAttempt]:actorLastAttempt)
+        if(!available.contains(label))
+            diagnostics.observedWithoutGeometry.push_back(label);
+    std::sort(diagnostics.observedWithoutGeometry.begin(),diagnostics.observedWithoutGeometry.end());
+    std::sort(diagnostics.observedIncompleteGeometry.begin(),diagnostics.observedIncompleteGeometry.end());
     diagnostics.sourceAddBoxHook=installedPartAdd;
     diagnostics.sourceLoadBoxesHook=installedPartLoad;
     diagnostics.sourceCompileCubesHook=installedPartCompile;
@@ -1366,10 +1381,6 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
         diagnostics.retainedSourceParts=sourceBoxes.size();
         for(auto const& [part,boxes]:sourceBoxes)
             diagnostics.retainedSourceBoxes+=boxes.boxes.size();
-    }
-    for(auto const& [label,lastAttempt]:actorLastAttempt){
-        if(!recordedActorLabels.contains(label))
-            diagnostics.observedWithoutGeometry.push_back(label);
     }
     return diagnostics;
 }
@@ -1393,7 +1404,6 @@ void clearNativeObservations(){
     rejectedQuota.store(0,std::memory_order_relaxed);
     rejectedDuplicate.store(0,std::memory_order_relaxed);
     rejectedLockBusy.store(0,std::memory_order_relaxed);
-    recordedActorLabels.clear();
     actorLastAttempt.clear();
     pending.clear();
     actorModels.clear();

@@ -269,12 +269,13 @@ void finish(bool cancelled) {
     auto actorStatus=actorCaptureDiagnostics();
     log().info("F6 BlockActor pre-cache: models={}, renderer_generation={}",
                startupModelCount(),nativeResourceGeneration());
-    log().info("F6 BlockActor hooks: dispatcher={}, chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, observed_without_geometry={}",
+    log().info("F6 BlockActor direct hooks: dispatcher={}, chest={}, sign={}, hanging={}, bed={}, shulker={}, bell={}, piston={}; captured_models={}, complete_models={}, incomplete_models={}, observed_without_geometry={}, observed_incomplete_geometry={}",
                actorStatus.dispatcherHook,actorStatus.hooksInstalled[0],actorStatus.hooksInstalled[1],
                actorStatus.hooksInstalled[2],actorStatus.hooksInstalled[3],
                actorStatus.hooksInstalled[4],actorStatus.hooksInstalled[5],
                actorStatus.hooksInstalled[6],
-               actorStatus.capturedModels,actorStatus.observedWithoutGeometry.size());
+               actorStatus.capturedModels,actorStatus.completeModels,actorStatus.incompleteModels,
+               actorStatus.observedWithoutGeometry.size(),actorStatus.observedIncompleteGeometry.size());
     gSession->library.observedActorRendererMask=actorStatus.observedRendererMask;
     log().info("F6 renderer dispatcher hooks: explicit={}, implicit={}",
                actorStatus.explicitDispatcherHook,actorStatus.implicitDispatcherHook);
@@ -294,7 +295,9 @@ void finish(bool cancelled) {
                actorStatus.sourceAddBoxHook,actorStatus.sourceLoadBoxesHook,
                actorStatus.sourceCompileCubesHook,actorStatus.retainedSourceParts,actorStatus.retainedSourceBoxes);
     for(auto const& label:actorStatus.observedWithoutGeometry)
-        log().warn("F6 BlockActor renderer observed but no valid native model geometry: {}",label);
+        log().warn("F6 BlockActor renderer observed, but no native model snapshot exists: {}",label);
+    for(auto const& label:actorStatus.observedIncompleteGeometry)
+        log().warn("F6 BlockActor model exists, but geometry or UV data is incomplete: {}",label);
     auto directory=gSession->library.directory;
     auto registered=gSession->library.registered;
     auto sampled=gSession->library.sampledBlocks;
@@ -356,18 +359,18 @@ void begin(LocalPlayer* player) {
     // Expand registered permutations incrementally rather than blocking F6 startup.
     for(auto const& [name,type]:types)
         if(type)session->registrationTypes.emplace_back(type.get());
-    {
-        // mBlockModelAccess() was declared but not exported in SDK 26.51.9.
-        // Continue using the game-thread registry enumeration instead of the
-        // unverified SDK symbol; keep model names, never pointers, across updates.
-        if(auto const* models=graphicsModels())
-            for(auto const& [name,model]:*models)
-                if(model)session->geometryModels.emplace_back(name);
-    }
+    // mBlockModelAccess() was declared but not exported in SDK 26.51.9.
+    // Keep model names, never native pointers, across renderer updates.
+    auto const* models=graphicsModels();
+    if(models)
+        for(auto const& [name,model]:*models)
+            if(model)session->geometryModels.emplace_back(name);
     log().info("F6 native registry snapshot: block_types={}, static_geometry_definitions={}",
                session->registrationTypes.size(),session->geometryModels.size());
-    if(session->geometryModels.empty())
-        log().warn("F6: native BlockGraphics model registry is empty; static_geometry_models will remain zero unless the renderer populates it");
+    if(!models)
+        log().warn("F6: BlockGraphics::mModels accessor symbol unavailable; static geometry registry cannot be inspected on this game build");
+    else if(session->geometryModels.empty())
+        log().warn("F6: BlockGraphics model registry is accessible but contains no populated static models");
     if(session->registrationTypes.empty()){
         log().error("F6: no registered block permutations found");
         return;
