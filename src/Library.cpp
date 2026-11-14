@@ -20,6 +20,8 @@
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace bsc {
 namespace {
@@ -225,6 +227,125 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
     return {slots.str(),variants.str(),unresolved,ambiguousVariants,
             resolvedByNativePbr};
 }
+// The game can tessellate a single block with textures that are absent
+// from BlockGraphics::mTextureItems (redstone components are an example).
+// Only use another native atlas entry when the mesh itself supplies its
+// PBR handle and that handle plus the exact rectangle identify one image.
+// UV containment alone is not proof: water and portal shaders can reuse
+// coordinates outside their ordinary six-slot material table.
+struct AtlasCandidate {
+    TextureBinding const* binding{};
+    TextureUVVariant const* variant{};
+};
+using AtlasIndex=std::unordered_map<std::uint16_t,std::vector<AtlasCandidate>>;
+AtlasIndex buildAtlasIndex(LibraryData const& data){
+    AtlasIndex out;
+    std::unordered_set<std::vector<TextureBinding> const*> seen;
+    for(auto const& block:data.blocks){
+        auto const* material=block.textures.get();
+        if(!material||!seen.insert(material).second)continue;
+        for(auto const& texture:*material)
+            for(auto const& variant:texture.variants)
+                if(!variant.sourcePath.empty())
+                    out[variant.pbrHandle].push_back({&texture,&variant});
+    }
+    return out;
+}
+bool insideAtlas(std::array<float,4> const& rect,Mesh const& mesh,
+                 std::vector<std::uint32_t> const& tris,std::size_t i){
+    constexpr float epsilon=0.00003f;
+    if(!std::all_of(rect.begin(),rect.end(),[](float v){
+           return std::isfinite(v);
+       })||std::abs(rect[2]-rect[0])<=epsilon||
+           std::abs(rect[3]-rect[1])<=epsilon)return false;
+    auto const loU=std::min(rect[0],rect[2])-epsilon;
+    auto const hiU=std::max(rect[0],rect[2])+epsilon;
+    auto const loV=std::min(rect[1],rect[3])-epsilon;
+    auto const hiV=std::max(rect[1],rect[3])+epsilon;
+    for(std::size_t j=0;j<3;++j){
+        auto const& v=mesh.vertices[tris[i+j]];
+        if(v.u<loU||v.u>hiU||v.v<loV||v.v>hiV)return false;
+    }
+    return true;
+}
+std::shared_ptr<std::vector<TextureBinding> const> addVerifiedAtlasBindings(
+    BlockResource const& block,AtlasIndex const& atlas,
+    std::vector<std::shared_ptr<std::vector<TextureBinding> const>>& owners,
+    std::uint64_t& addedBindings){
+    std::shared_ptr<std::vector<TextureBinding>> supplemented;
+    for(auto const& sample:block.samples){
+        if(!sample.nativeObserved)continue;
+        for(auto const& meshRef:sample.meshes){
+            if(!meshRef||meshRef->registryVisualBounds||!meshRef->uvValid||
+               meshRef->layer==13||meshRef->layer==12)continue;
+            auto const& mesh=*meshRef;
+            std::vector<std::uint32_t> tris;
+            try{tris=triangulate(mesh);}catch(std::exception const&){continue;}
+            for(std::size_t i=0;i<tris.size();i+=3){
+                std::uint16_t handle=0xffffu;
+                bool consistent=true;
+                for(std::size_t j=0;j<3;++j){
+                    auto const native=mesh.vertices[tris[i+j]].pbrHandle;
+                    if(native==0xffffu){consistent=false;break;}
+                    if(handle==0xffffu)handle=native;
+                    else if(handle!=native){consistent=false;break;}
+                }
+                if(!consistent||handle==0xffffu)continue;
+                auto const& existing=supplemented?
+                    static_cast<std::vector<TextureBinding> const&>(*supplemented):
+                    block.textureBindings();
+                bool local=false;
+                for(auto const& tex:existing){
+                    for(auto const& v:tex.variants)
+                        if(v.pbrHandle==handle && insideAtlas(v.atlasUv,mesh,tris,i)){
+                            local=true;break;
+                        }
+                    if(local)break;
+                }
+                if(local)continue;
+                auto const it=atlas.find(handle);
+                if(it==atlas.end())continue;
+                AtlasCandidate choice;
+                bool conflict=false;
+                for(auto const& candidate:it->second){
+                    auto const& v=*candidate.variant;
+                    // A missing-tile atlas location is not an assertion that
+                    // the game's shader intended to display that texture.
+                    if(v.sourcePath.find("missing_tile")!=std::string::npos ||
+                       v.sourcePath.find("textures/blocks/")!=0 ||
+                       !insideAtlas(v.atlasUv,mesh,tris,i))continue;
+                    if(!choice.variant){
+                        choice=candidate;
+                    }else if(choice.variant->sourcePath!=v.sourcePath ||
+                             choice.variant->atlasUv!=v.atlasUv ||
+                             choice.binding->additive!=candidate.binding->additive){
+                        conflict=true;break;
+                    }
+                }
+                if(conflict||!choice.variant)continue;
+                if(!supplemented)
+                    supplemented=std::make_shared<std::vector<TextureBinding>>(
+                        block.textureBindings());
+                if(supplemented->size()>=64)continue;
+                TextureBinding inferred=*choice.binding;
+                inferred.slot=static_cast<std::uint32_t>(supplemented->size());
+                inferred.variants={*choice.variant};
+                inferred.carriedVariants.clear();
+                inferred.carriedName.clear();
+                inferred.carriedAtlasItem.clear();
+                inferred.atlasUv=choice.variant->atlasUv;
+                inferred.sourcePath=choice.variant->sourcePath;
+                inferred.pbrHandle=choice.variant->pbrHandle;
+                supplemented->push_back(std::move(inferred));
+                ++addedBindings;
+            }
+        }
+    }
+    if(!supplemented)return block.textures;
+    std::shared_ptr<std::vector<TextureBinding> const> result=supplemented;
+    owners.push_back(result); // Keep pointer-keyed material caches valid.
+    return result;
+}
 std::string meshJson(Mesh const& mesh) {
     auto triangles=triangulate(mesh);
     std::ostringstream s;
@@ -311,6 +432,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         // re-triangulating, re-serializing and re-hashing the same object.
         PoolV3 pool;
         std::map<std::vector<TextureBinding> const*,std::uint32_t> materialTableRefs;
+        auto const verifiedAtlas=buildAtlasIndex(data);
+        std::vector<std::shared_ptr<std::vector<TextureBinding> const>> ownedTables;
+        std::uint64_t importedAtlasBindings=0;
+        std::uint64_t supplementedStates=0;
         std::map<Mesh const*,SharedMeshEncoding> canonicalGeometryCache;
         std::map<Mesh const*,std::uint32_t> canonicalGeometryRefs;
         std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,std::uint32_t> canonicalAppearanceRefs;
@@ -347,6 +472,11 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             }catch(std::exception const&){++writeFailures;}
         }
         for (auto const& block : data.blocks) {
+            auto const updatedTable=addVerifiedAtlasBindings(
+                block,verifiedAtlas,ownedTables,importedAtlasBindings);
+            BlockResource bindingView;
+            bindingView.textures=updatedTable;
+            if(updatedTable.get()!=block.textures.get())++supplementedStates;
             if(block.renderLayer>=0) layers.insert(static_cast<std::uint32_t>(block.renderLayer));
             std::string stateStatus;
             std::string reason;
@@ -430,7 +560,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             if(block.hasGeometryAlias){
                 blocks<<"null";
             }else{
-                auto key=block.textures.get();
+                auto key=bindingView.textures.get();
                 auto cached=memoizedTextureTables.find(key);
                 if(cached==memoizedTextureTables.end()){
                     std::ostringstream textureStream;
@@ -441,7 +571,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             // Audio-only state aliases inherit the canonical model's face
             // texture bindings; repeating atlas tables for every note pitch
             // would waste far more space than the shared mesh itself.
-            for(auto const& tex:block.textureBindings()){
+            for(auto const& tex:bindingView.textureBindings()){
                 if(!firstTexture)textureStream<<',';
                 firstTexture=false;
                 textureStream << "{\"slot\":" << tex.slot
@@ -520,10 +650,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                     try {
                         if(!meshRef)continue;
                         Mesh const& mesh=*meshRef;
-                        auto bindingKey=std::make_pair(&mesh,block.textures.get());
+                        auto bindingKey=std::make_pair(&mesh,bindingView.textures.get());
                         auto bindingIt=memoizedBindings.find(bindingKey);
                         if(bindingIt==memoizedBindings.end())
-                            bindingIt=memoizedBindings.emplace(bindingKey,faceBindingJson(mesh,block)).first;
+                            bindingIt=memoizedBindings.emplace(bindingKey,faceBindingJson(mesh,bindingView)).first;
                         auto const& bindings=bindingIt->second;
                         // V2 shared geometry is independent of UV, tint, material
                         // and state. Exact float32 positions and triangle winding
@@ -707,6 +837,8 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"unresolved_texture_triangles\":" << unmatchedFaces
                  << ",\"ambiguous_texture_variant_triangles\":" << ambiguousVariantFaces
                  << ",\"native_pbr_resolved_triangles\":" << nativePbrResolvedFaces
+                 << ",\"verified_global_atlas_bindings_added\":" << importedAtlasBindings
+                 << ",\"global_atlas_augmented_states\":" << supplementedStates
                  << ",\"sample_contexts\":" << samples
                  << ",\"registered_block_states\":" << data.registered
                  << ",\"loaded_chunks_scanned\":" << data.visitedChunks
