@@ -378,7 +378,7 @@ void begin(LocalPlayer* player) {
     log().info("F6 native registry snapshot: block_types={}, static_geometry_definitions={}",
                session->registrationTypes.size(),session->geometryModels.size());
     if(!models)
-        log().warn("F6: BlockGraphics::mModels accessor symbol unavailable; static geometry registry cannot be inspected on this game build");
+        log().warn("F6: BlockGraphics::mModels is not exported; native GeometryGroup sources and actual BlockTessellator scene meshes are captured separately, without claiming static-registry associations");
     else if(session->geometryModels.empty())
         log().warn("F6: BlockGraphics model registry is accessible but contains no populated static models");
     if(session->registrationTypes.empty()){

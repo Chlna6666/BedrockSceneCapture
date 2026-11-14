@@ -1433,7 +1433,7 @@ bool installActorWireframeObservations(ll::mod::NativeMod& mod){
     installActorRenderHooks(mod);
     bool const partHook=installActorWireframePartHook(mod);
     if(!partHook && (installedDispatch || installedImplicitDispatch))
-        mod.getLogger().warn("F7/F6: ModelPart render hooks unavailable; dispatcher capture still active");
+        mod.getLogger().info("F7/F6: native ModelPart render symbol unavailable; dispatcher capture active (per-bone overlay requires a verified hook address)");
     return installedDispatch || installedImplicitDispatch || partHook;
 }
 bool installStartupModelCapture(ll::mod::NativeMod& mod){
@@ -1512,10 +1512,28 @@ bool installNativeObservations(ll::mod::NativeMod& mod){
     // complete F6 red BlockEntity preview.
     installActorWireframePartHook(mod);
     installActorRenderHooks(mod);
-    install("ModelPart::addBox",installedPartAdd,
-        []{return BSCPartAddBoxHook::hook();});
-    install("ModelPart::loadBoxes",installedPartLoad,
-        []{return BSCPartLoadBoxesHook::hook();});
+    // 26.60.5's MCNAPI-only ModelPart constructors are not exported.
+    // An absent symbol is not a hook error and must not be retried on every
+    // F6/F7 toggle. Prefer the verified compileCubes and GeometryGroup paths.
+    static bool checkedAddBox{},checkedLoadBoxes{};
+    if(!installedPartAdd && !checkedAddBox){
+        checkedAddBox=true;
+        constexpr char symbol[]=
+            "?addBox@ModelPart@@QEAAXAEBVVec3@@0_NMAEBVColor@mce@@@Z";
+        if(ll::memory::SymbolView{symbol}.resolve(true))
+            install("ModelPart::addBox",installedPartAdd,
+                []{return BSCPartAddBoxHook::hook();});
+        else logger.warn("F6 ModelPart::addBox is not exported; using native GeometryGroup boxes and compileCubes fallback");
+    }
+    if(!installedPartLoad && !checkedLoadBoxes){
+        checkedLoadBoxes=true;
+        constexpr char symbol[]=
+            "?loadBoxes@ModelPart@@QEAAXAEBVVec3@@0AEBV?$vector@UBox@Geometry@@V?$allocator@UBox@Geometry@@@std@@@std@@0@Z";
+        if(ll::memory::SymbolView{symbol}.resolve(true))
+            install("ModelPart::loadBoxes",installedPartLoad,
+                []{return BSCPartLoadBoxesHook::hook();});
+        else logger.warn("F6 ModelPart::loadBoxes is not exported; capturing source GeometryGroup nodes instead");
+    }
     // This hook is already installed during NativeMod::enable. Retry only
     // if the early hook failed; never install it twice.
     install("ModelPart::compileCubes",installedPartCompile,

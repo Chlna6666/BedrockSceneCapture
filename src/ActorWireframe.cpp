@@ -73,6 +73,7 @@ std::atomic<std::uint64_t> partsCalled{},partsWithCpuGeometry{},partsWithValidTr
     missingCpuGeometry{},discardedTransforms{},emittedSegments{};
 bool installed{};
 bool installedAtPosition{};
+bool triedRender{},triedAtPosition{};
 // Render callbacks may run off the hook-installation thread. Keep the
 // hot-path capability check atomic, without reading installation flags.
 std::atomic_bool partHooksAvailable{false};
@@ -340,19 +341,31 @@ void updateActorWireframeCamera(Vec3 const& camera){
 // Keep the hook scoped; do not store raw BlockActorRenderData pointers.
 bool installActorWireframePartHook(ll::mod::NativeMod& mod){
     if(installed && installedAtPosition)return true;
-    if(!installed){
-        mod.getLogger().info("F7/F6 BlockEntity ModelPart::render hook BEGIN");
-        auto const status=BSCActorPartWireHook::hook();
-        installed=(status==0);
-        if(installed)mod.getLogger().info("F7/F6 BlockEntity ModelPart::render hook OK");
-        else mod.getLogger().warn("F7/F6 BlockEntity ModelPart::render hook FAILED, hook_status={}",status);
+    if(!installed && !triedRender){
+        triedRender=true;
+        constexpr char symbol[]=
+            "?render@ModelPart@@QEAAXAEAVScreenContext@@AEAVModel@@M_NIVMatrix@@@Z";
+        if(!ll::memory::SymbolView{symbol}.resolve(true)){
+            mod.getLogger().warn("F7/F6 ModelPart::render is not exported by this client; no verified native detour address, real-time part/bone wireframe unavailable");
+        }else{
+            auto const status=BSCActorPartWireHook::hook();
+            installed=(status==0);
+            if(installed)mod.getLogger().info("F7/F6 ModelPart::render hook OK");
+            else mod.getLogger().warn("F7/F6 ModelPart::render hook failed after symbol resolution: status={}",status);
+        }
     }
-    if(!installedAtPosition){
-        mod.getLogger().info("F7/F6 BlockEntity ModelPart::renderAtPosition hook BEGIN");
-        auto const status=BSCActorPartAtPositionWireHook::hook();
-        installedAtPosition=(status==0);
-        if(installedAtPosition)mod.getLogger().info("F7/F6 BlockEntity ModelPart::renderAtPosition hook OK");
-        else mod.getLogger().warn("F7/F6 BlockEntity ModelPart::renderAtPosition hook FAILED, hook_status={}",status);
+    if(!installedAtPosition && !triedAtPosition){
+        triedAtPosition=true;
+        constexpr char symbol[]=
+            "?renderAtPosition@ModelPart@@QEAAXAEAVScreenContext@@AEAVModel@@AEBVVec3@@M_NIVMatrix@@@Z";
+        if(!ll::memory::SymbolView{symbol}.resolve(true)){
+            mod.getLogger().warn("F7/F6 ModelPart::renderAtPosition is not exported; retaining validated dispatcher and native geometry-source paths");
+        }else{
+            auto const status=BSCActorPartAtPositionWireHook::hook();
+            installedAtPosition=(status==0);
+            if(installedAtPosition)mod.getLogger().info("F7/F6 ModelPart::renderAtPosition hook OK");
+            else mod.getLogger().warn("F7/F6 ModelPart::renderAtPosition hook failed after symbol resolution: status={}",status);
+        }
     }
     bool const available=installed || installedAtPosition;
     partHooksAvailable.store(available,std::memory_order_release);
@@ -360,10 +373,15 @@ bool installActorWireframePartHook(ll::mod::NativeMod& mod){
 }
 void uninstallActorWireframePartHook(){
     partHooksAvailable.store(false,std::memory_order_release);
-    if(installed){BSCActorPartWireHook::unhook();installed=false;}
+    if(installed){
+        BSCActorPartWireHook::unhook();
+        installed=false;
+        triedRender=false;
+    }
     if(installedAtPosition){
         BSCActorPartAtPositionWireHook::unhook();
         installedAtPosition=false;
+        triedAtPosition=false;
     }
     lines.clear();
     contexts.clear();
