@@ -467,6 +467,61 @@ void recordRendererModel(BlockActorRenderDispatcher& dispatcher,
     if(!prewarming && (prev==second || !last.compare_exchange_strong(
         prev,second,std::memory_order_relaxed)))return;
     switch(id){
+    // Capture models at renderer initialization as well as during live render.
+    // The runtime render hooks alone can run after CPU cubes were compacted.
+    case BlockActorRendererId::Chest: {
+        auto const* chest=static_cast<ChestRenderer const*>(renderer.get());
+        auto const& small=chest->mChestModel.get();
+        auto const& large=chest->mLargeChestModel.get();
+        NativeTextureResources smallTextures,largeTextures;
+        addActorColor(smallTextures,"normal",chest->normalTex.get());
+        addActorColor(smallTextures,"trapped",chest->trappedTex.get());
+        addActorColor(smallTextures,"ender",chest->enderTex.get());
+        addActorColor(largeTextures,"large",chest->largeTex.get());
+        addActorColor(largeTextures,"trapped_large",chest->trappedLargeTex.get());
+        for(std::size_t i=0;i<4;++i){
+            auto const type=static_cast<CopperType>(i);
+            addActorColor(smallTextures,"copper_"+std::to_string(i),
+                          chest->mCopperTextures.get()[type]);
+            addActorColor(largeTextures,"copper_large_"+std::to_string(i),
+                          chest->mLargeCopperTextures.get()[type]);
+        }
+        recordActor("chest_normal",small,
+            {&small.mLid.get(),&small.mBottom.get(),&small.mLock.get()},smallTextures);
+        recordActor("chest_large",large,
+            {&large.mLid.get(),&large.mBottom.get(),&large.mLock.get()},largeTextures);
+        break;
+    }
+    case BlockActorRendererId::Sign: {
+        auto const* sign=static_cast<SignRenderer const*>(renderer.get());
+        auto const& model=sign->mSignModel.get();
+        NativeTextureResources textures;
+        addActorColor(textures,"default",sign->mSignTex.get());
+        for(auto const& [type,texture]:sign->mTextureMap.get())
+            addActorColor(textures,"sign_type_"+std::to_string(static_cast<int>(type)),texture);
+        recordActor("standing_sign",model,{&model.mCube.get(),&model.mCube2.get()},textures);
+        break;
+    }
+    case BlockActorRendererId::HangingSign: {
+        auto const* sign=static_cast<HangingSignRenderer const*>(renderer.get());
+        auto const& model=sign->mHangingSignModel.get();
+        NativeTextureResources textures;
+        addActorColor(textures,"default",sign->mSignTex.get());
+        for(auto const& [type,texture]:sign->mTextureMap.get())
+            addActorColor(textures,"hanging_sign_type_"+std::to_string(static_cast<int>(type)),texture);
+        recordActor("hanging_sign",model,
+            {&model.mPlank.get(),&model.mBoard.get(),&model.mVChain.get(),
+             &model.mChainL1.get(),&model.mChainL2.get(),
+             &model.mChainR1.get(),&model.mChainR2.get()},textures);
+        break;
+    }
+    case BlockActorRendererId::PistonArm: {
+        auto const* piston=static_cast<PistonBlockActorRenderer const*>(renderer.get());
+        auto const& model=piston->mPistonArm.get();
+        recordActor("piston_arm",model,
+            {&model.mArmBase.get(),&model.mArm.get(),&model.mFront.get()});
+        break;
+    }
     case BlockActorRendererId::Skull: {
         auto const* skull=static_cast<SkullBlockRenderer const*>(renderer.get());
         // The slot order is SkullBlock::SkullType (0 skeleton, 1 wither,
@@ -764,7 +819,11 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     }
     Mesh mesh;
     mesh.primitive=static_cast<std::uint32_t>(raw.mMode);
-    mesh.layer=static_cast<std::uint32_t>(gfx->mRenderLayer);
+    // BlockGraphics::mRenderLayer is a registry default, not necessarily
+    // the effective material for a rendered position (water, glass, foliage,
+    // custom block material instances, etc). Use the renderer's virtual
+    // per-position query while the live BlockSource is valid.
+    mesh.layer=static_cast<std::uint32_t>(gfx->getRenderLayer(*region,pos));
     auto const& normals=raw.mNormals.get();
     auto const& uv=raw.mTextureUVs[0].get();
     auto const& colors=raw.mColors.get();
