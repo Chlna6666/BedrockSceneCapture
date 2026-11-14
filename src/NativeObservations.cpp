@@ -109,7 +109,7 @@ std::unordered_map<std::string,std::string> actorModels;
 std::unordered_map<std::string,std::string> startupActorModels;
 struct EmptyActorModelProbe {
     std::size_t parts{},childParts{},textureMeshes{},modelGeometries{};
-    std::size_t nativeCubes{},sourceBoxes{},polygonFaces{};
+    std::size_t nativeCubes{},sourceBoxes{},polygonFaces{},compiledMeshes{};
 };
 // Startup snapshots survive F6 resets; runtime probes are per recording.
 std::unordered_map<std::string,EmptyActorModelProbe> startupEmptyActorModels;
@@ -120,6 +120,10 @@ struct SourceBoxes {
     bool fromGeometryResource{};
     bool fromCompiledCubes{};
     std::vector<std::string> boxes;
+    // Exact vertices emitted by exported ModelPart::compileCubes, captured
+    // before Tessellator CPU data is uploaded or compacted.
+    std::string compiledMesh;
+    bool compiledMeshUvComplete{};
 };
 std::mutex sourceBoxesMutex;
 std::unordered_map<ModelPart const*,SourceBoxes> sourceBoxes;
@@ -251,7 +255,8 @@ std::string modelJson(Model const& model,
     }
     o<<"],\"parts\":[";
     bool firstPart=true;
-    std::size_t cubes=0,polyFaces=0,sourceBoxCount=0,unresolvedCubes=0;
+    std::size_t cubes=0,polyFaces=0,sourceBoxCount=0,compiledMeshCount=0,
+                unresolvedCubes=0;
     std::size_t incompleteSourceUVs=0,incompleteNativeUVs=0;
     std::size_t invalidPolygonMeshes=0;
     for(std::size_t index=0;index<parts.size();++index){
@@ -328,6 +333,11 @@ std::string modelJson(Model const& model,
         {
             std::lock_guard sourceLock(sourceBoxesMutex);
             auto const it=sourceBoxes.find(part);
+            if(it!=sourceBoxes.end() && !it->second.compiledMesh.empty()){
+                o<<",\"compiled_native_mesh\":"<<it->second.compiledMesh;
+                ++compiledMeshCount;
+                if(!it->second.compiledMeshUvComplete)++incompleteNativeUVs;
+            }
             if(it!=sourceBoxes.end() && !it->second.boxes.empty()){
                 o<<",\"native_source_boxes\":[";
                 for(std::size_t i=0;i<it->second.boxes.size();++i){
@@ -435,6 +445,7 @@ std::string modelJson(Model const& model,
      <<",\"incomplete_source_uv_boxes\":"<<incompleteSourceUVs
      <<",\"incomplete_native_uv\":"<<incompleteNativeUVs
      <<",\"invalid_polygon_meshes\":"<<invalidPolygonMeshes
+     <<",\"compiled_native_meshes\":"<<compiledMeshCount
      <<",\"geometry_complete\":"
      <<(unresolvedCubes==0 && incompleteSourceUVs==0 &&
         incompleteNativeUVs==0 && invalidPolygonMeshes==0?"true":"false")
@@ -442,7 +453,9 @@ std::string modelJson(Model const& model,
     probe.nativeCubes=cubes;
     probe.sourceBoxes=sourceBoxCount;
     probe.polygonFaces=polyFaces;
-    return cubes||polyFaces||sourceBoxCount?o.str():std::string{};
+    probe.compiledMeshes=compiledMeshCount;
+    return cubes||polyFaces||sourceBoxCount||compiledMeshCount?
+        o.str():std::string{};
 }
 void recordActor(char const* label,Model const& model,
                  std::vector<ModelPart const*> const& explicitParts,
@@ -1023,7 +1036,80 @@ LL_TYPE_INSTANCE_HOOK(BSCPartCompileCubesHook,ll::memory::HookPriority::Normal,
             }
         }
     }
+    auto& previous=tess.mMeshData.get();
+    auto const beforeVertices=previous.mPositions.get().size();
+    auto const beforeIndices=previous.mIndices.get().size();
     origin(tess);
+    if(!(armed.load(std::memory_order_relaxed) ||
+         startupCaptureActive.load(std::memory_order_relaxed)))return;
+    // Prefer only newly generated tessellation data, never an existing
+    // Tessellator buffer containing unrelated model parts.
+    auto const& data=tess.mMeshData.get();
+    auto const& positions=data.mPositions.get();
+    auto const& indices=data.mIndices.get();
+    if(beforeVertices>=positions.size() ||
+       positions.size()-beforeVertices>MaxNativeVertices ||
+       (indices.size()>beforeIndices &&
+        indices.size()-beforeIndices>MaxNativeVertices*6))return;
+    auto const& uvs=data.mTextureUVs[0].get();
+    auto const& normals=data.mNormals.get();
+    auto const& colors=data.mColors.get();
+    auto const& pbr=data.mPBRTextureIndices.get();
+    bool const fullUvs=uvs.size()==positions.size();
+    bool const fullNormals=normals.size()==positions.size();
+    bool const fullColors=colors.size()==positions.size();
+    bool const fullPbr=pbr.size()==positions.size();
+    auto const mode=static_cast<unsigned>(data.mMode);
+    if(mode<1||mode>3)return;
+    std::ostringstream mesh;
+    mesh.imbue(std::locale::classic());
+    mesh<<std::setprecision(std::numeric_limits<float>::max_digits10);
+    mesh<<"{\"source\":\"native_modelpart_compile_tessellator\","
+           "\"uv_space\":\"native_model_texture\","
+           "\"primitive\":"<<mode<<",\"vertices\":[";
+    for(auto i=beforeVertices;i<positions.size();++i){
+        auto const& pos=positions[i];
+        if(!std::isfinite(pos.x)||!std::isfinite(pos.y)||!std::isfinite(pos.z)||
+           std::abs(pos.x)>4096.f||std::abs(pos.y)>4096.f||
+           std::abs(pos.z)>4096.f)return;
+        if(i>beforeVertices)mesh<<',';
+        mesh<<'['<<pos.x<<','<<pos.y<<','<<pos.z;
+        if(fullNormals){
+            auto const& n=normals[i];
+            if(!std::isfinite(n.x)||!std::isfinite(n.y)||!std::isfinite(n.z))return;
+            mesh<<','<<n.x<<','<<n.y<<','<<n.z;
+        }else mesh<<",0,0,0";
+        if(fullUvs){
+            auto const& uv=uvs[i];
+            if(!std::isfinite(uv.x)||!std::isfinite(uv.y))return;
+            mesh<<','<<uv.x<<','<<uv.y;
+        }else mesh<<",0,0";
+        mesh<<','<<(fullColors?colors[i]:0xffffffffu)
+            <<','<<(fullPbr?pbr[i]:0xffffu)<<']';
+    }
+    mesh<<"],\"indices\":[";
+    bool hasIndices=indices.size()>beforeIndices;
+    if(hasIndices){
+        for(auto j=beforeIndices;j<indices.size();++j){
+            auto index=indices[j];
+            if(index<beforeVertices||index>=positions.size())return;
+            if(j>beforeIndices)mesh<<',';
+            mesh<<(index-beforeVertices);
+        }
+    }
+    mesh<<"],\"uv_complete\":"<<(fullUvs?"true":"false")<<'}';
+    std::unique_lock lock(sourceBoxesMutex,std::try_to_lock);
+    if(!lock.owns_lock())return;
+    auto it=sourceBoxes.find(this);
+    if(it==sourceBoxes.end()){
+        if(sourceBoxes.size()>=MaxSourceParts)return;
+        it=sourceBoxes.try_emplace(this).first;
+    }
+    if(it->second.compiledMesh.empty() ||
+       (!it->second.compiledMeshUvComplete && fullUvs)){
+        it->second.compiledMesh=mesh.str();
+        it->second.compiledMeshUvComplete=fullUvs;
+    }
 }
 LL_TYPE_INSTANCE_HOOK(BSCPartLoadBoxesHook,ll::memory::HookPriority::Normal,
     ModelPart,ll::memory::SymbolView{"?loadBoxes@ModelPart@@QEAAXAEBVVec3@@0AEBV?$vector@UBox@Geometry@@V?$allocator@UBox@Geometry@@@std@@@std@@0@Z"},void,
@@ -1519,7 +1605,7 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
             runtime!=runtimeEmptyActorModels.end(),
             probe->parts,probe->childParts,probe->textureMeshes,
             probe->modelGeometries,probe->nativeCubes,
-            probe->sourceBoxes,probe->polygonFaces
+            probe->sourceBoxes,probe->polygonFaces,probe->compiledMeshes
         });
     }
     diagnostics.sourceAddBoxHook=installedPartAdd;

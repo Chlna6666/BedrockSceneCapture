@@ -41,7 +41,7 @@ struct ActorMissingModelProbe {
     std::string name;
     bool failedAtStartup{},failedAtRuntime{};
     std::size_t parts{},childParts{},textureMeshes{},modelGeometries{};
-    std::size_t nativeCubes{},sourceBoxes{},polygonFaces{};
+    std::size_t nativeCubes{},sourceBoxes{},polygonFaces{},compiledMeshes{};
 };
 struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell, piston arm.

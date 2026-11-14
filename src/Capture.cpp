@@ -299,10 +299,10 @@ void finish(bool cancelled) {
     for(auto const& label:actorStatus.observedIncompleteGeometry)
         log().warn("F6 BlockActor model exists, but geometry or UV data is incomplete: {}",label);
     for(auto const& probe:actorStatus.missingModelProbes)
-        log().warn("F6 BlockActor empty native model: {} startup={} runtime={} parts={} descendant_parts={} texture_meshes={} model_geometries={} cubes={} source_boxes={} poly_faces={}",
+        log().warn("F6 BlockActor empty native model: {} startup={} runtime={} parts={} descendant_parts={} texture_meshes={} model_geometries={} cubes={} source_boxes={} poly_faces={} compiled_meshes={}",
                    probe.name,probe.failedAtStartup,probe.failedAtRuntime,
                    probe.parts,probe.childParts,probe.textureMeshes,probe.modelGeometries,
-                   probe.nativeCubes,probe.sourceBoxes,probe.polygonFaces);
+                   probe.nativeCubes,probe.sourceBoxes,probe.polygonFaces,probe.compiledMeshes);
     auto directory=gSession->library.directory;
     auto registered=gSession->library.registered;
     auto sampled=gSession->library.sampledBlocks;
