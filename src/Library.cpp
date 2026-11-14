@@ -108,6 +108,7 @@ struct TriangleBindings {
     std::string variants;
     std::uint64_t unresolved{};
     std::uint64_t ambiguousVariants{};
+    std::uint64_t resolvedByNativePbr{};
 };
 TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
     auto triangles=triangulate(mesh);
@@ -117,6 +118,7 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
     constexpr float epsilon=0.00003f;
     std::uint64_t unresolved=0;
     std::uint64_t ambiguousVariants=0;
+    std::uint64_t resolvedByNativePbr=0;
     if(mesh.registryVisualBounds){
         // Vertex UV is face-local, not an atlas coordinate; BMCBL resolves
         // the named textures using the resource-pack definitions.
@@ -142,48 +144,67 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
             continue;
         }
         if(i){slots<<',';variants<<',';}
+        // The original native mesh can carry the exact PBR texture handle
+        // per vertex. For uniformly tagged triangles it disambiguates atlas
+        // variants that deliberately share identical UV coordinates.
+        std::uint16_t nativePbr=0xffffu;
+        bool consistentPbr=true;
+        for(std::size_t j=0;j<3;++j){
+            auto const handle=mesh.vertices[triangles[i+j]].pbrHandle;
+            if(handle==0xffffu)continue;
+            if(nativePbr==0xffffu)nativePbr=handle;
+            else if(nativePbr!=handle){consistentPbr=false;break;}
+        }
         TextureBinding const* selected=nullptr;
         TextureUVVariant const* selectedVariant=nullptr;
         bool ambiguous=false;
         bool ambiguousPbrVariant=false;
-        for(auto const& texture:block.textureBindings()){
-            for(auto const& candidate:texture.variants){
-                auto const& rect=candidate.atlasUv;
-                // Native atlas metadata can contain unresolved/degenerate
-                // rectangles while textures are loading. Such a rectangle
-                // must never be assigned as a valid per-face UV mapping.
-                if(!std::all_of(rect.begin(),rect.end(),[](float v){
-                       return std::isfinite(v);
-                   }) || std::abs(rect[2]-rect[0])<=epsilon ||
-                         std::abs(rect[3]-rect[1])<=epsilon)
-                    continue;
-                auto loU=std::min(rect[0],rect[2])-epsilon;
-                auto hiU=std::max(rect[0],rect[2])+epsilon;
-                auto loV=std::min(rect[1],rect[3])-epsilon;
-                auto hiV=std::max(rect[1],rect[3])+epsilon;
-                bool inside=true;
-                for(std::size_t j=0;j<3;++j){
-                    auto const& v=mesh.vertices[triangles[i+j]];
-                    if(v.u<loU||v.u>hiU||v.v<loV||v.v>hiV){inside=false;break;}
-                }
-                if(!inside)continue;
-                if(!selected){
-                    selected=&texture;
-                    selectedVariant=&candidate;
-                }else if(candidate.sourcePath!=selectedVariant->sourcePath ||
-                         candidate.atlasUv!=selectedVariant->atlasUv ||
-                         texture.additive!=selected->additive){
-                    // Source image, atlas rectangle or additive blending
-                    // differs. The original triangle cannot be disambiguated.
-                    ambiguous=true;
-                }else if(candidate.pbrHandle!=selectedVariant->pbrHandle){
-                    // Atlas UVs establish the texture source but do not
-                    // identify the active PBR/frame. Keep the known slot;
-                    // preserve uncertainty with an unselected variant.
-                    ambiguousPbrVariant=true;
+        auto matchCandidates=[&](bool filterNativePbr){
+            selected=nullptr;
+            selectedVariant=nullptr;
+            ambiguous=false;
+            ambiguousPbrVariant=false;
+            for(auto const& texture:block.textureBindings()){
+                for(auto const& candidate:texture.variants){
+                    if(filterNativePbr && candidate.pbrHandle!=nativePbr)
+                        continue;
+                    auto const& rect=candidate.atlasUv;
+                    if(!std::all_of(rect.begin(),rect.end(),[](float v){
+                           return std::isfinite(v);
+                       }) || std::abs(rect[2]-rect[0])<=epsilon ||
+                             std::abs(rect[3]-rect[1])<=epsilon)
+                        continue;
+                    auto const loU=std::min(rect[0],rect[2])-epsilon;
+                    auto const hiU=std::max(rect[0],rect[2])+epsilon;
+                    auto const loV=std::min(rect[1],rect[3])-epsilon;
+                    auto const hiV=std::max(rect[1],rect[3])+epsilon;
+                    bool inside=true;
+                    for(std::size_t j=0;j<3;++j){
+                        auto const& v=mesh.vertices[triangles[i+j]];
+                        if(v.u<loU||v.u>hiU||v.v<loV||v.v>hiV){
+                            inside=false;break;
+                        }
+                    }
+                    if(!inside)continue;
+                    if(!selected){
+                        selected=&texture;
+                        selectedVariant=&candidate;
+                    }else if(candidate.sourcePath!=selectedVariant->sourcePath ||
+                             candidate.atlasUv!=selectedVariant->atlasUv ||
+                             texture.additive!=selected->additive){
+                        ambiguous=true;
+                    }else if(candidate.pbrHandle!=selectedVariant->pbrHandle){
+                        ambiguousPbrVariant=true;
+                    }
                 }
             }
+        };
+        bool exactPbrMatched=false;
+        if(consistentPbr && nativePbr!=0xffffu){
+            matchCandidates(true);
+            exactPbrMatched=selected!=nullptr;
         }
+        if(!exactPbrMatched)matchCandidates(false);
         if(!selected || ambiguous){
             ++unresolved;
             slots<<"null";
@@ -195,12 +216,14 @@ TriangleBindings faceBindingJson(Mesh const& mesh,BlockResource const& block) {
                 ++ambiguousVariants;
             }else{
                 variants<<'['<<selectedVariant->variant<<','<<selectedVariant->frame<<']';
+                if(exactPbrMatched)++resolvedByNativePbr;
             }
         }
     }
     slots << ']';
     variants << ']';
-    return {slots.str(),variants.str(),unresolved,ambiguousVariants};
+    return {slots.str(),variants.str(),unresolved,ambiguousVariants,
+            resolvedByNativePbr};
 }
 std::string meshJson(Mesh const& mesh) {
     auto triangles=triangulate(mesh);
@@ -310,6 +333,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::uint64_t samples = 0, meshRefs = 0, writeFailures = 0;
         std::uint64_t unmatchedFaces=0;
         std::uint64_t ambiguousVariantFaces=0;
+        std::uint64_t nativePbrResolvedFaces=0;
         for(auto const& model:data.staticModels){
             try{
                 auto const id=pool.intern(PoolKind::Model,model.geometryJson);
@@ -491,6 +515,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 std::vector<std::uint32_t> perMeshSharedAppearance;
                 std::uint64_t localUnmatched=0;
                 std::uint64_t localAmbiguousVariants=0;
+                std::uint64_t localNativePbrResolved=0;
                 for (auto const& meshRef : sample.meshes) {
                     try {
                         if(!meshRef)continue;
@@ -524,6 +549,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                         layers.insert(mesh.layer);
                         localUnmatched+=bindings.unresolved;
                         localAmbiguousVariants+=bindings.ambiguousVariants;
+                        localNativePbrResolved+=bindings.resolvedByNativePbr;
                         ++meshRefs;
                     } catch (std::exception const&) {
                         ++writeFailures;
@@ -542,8 +568,10 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 }
                 unmatchedFaces+=localUnmatched;
                 ambiguousVariantFaces+=localAmbiguousVariants;
+                nativePbrResolvedFaces+=localNativePbrResolved;
                 blocks << "],\"unresolved_texture_triangles\":" << localUnmatched
                        << ",\"ambiguous_texture_variant_triangles\":" << localAmbiguousVariants
+                       << ",\"native_pbr_resolved_triangles\":" << localNativePbrResolved
                        << ",\"missing_meshes\":" << sample.missing << '}';
             }
             blocks << "]}";
@@ -678,6 +706,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"native_geometry_sources\":" << nativeGeometryResourceIndex.size()
                  << ",\"unresolved_texture_triangles\":" << unmatchedFaces
                  << ",\"ambiguous_texture_variant_triangles\":" << ambiguousVariantFaces
+                 << ",\"native_pbr_resolved_triangles\":" << nativePbrResolvedFaces
                  << ",\"sample_contexts\":" << samples
                  << ",\"registered_block_states\":" << data.registered
                  << ",\"loaded_chunks_scanned\":" << data.visitedChunks

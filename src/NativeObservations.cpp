@@ -868,6 +868,8 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
     auto const& normals=raw.mNormals.get();
     auto const& uv=raw.mTextureUVs[0].get();
     auto const& colors=raw.mColors.get();
+    auto const& pbrIndices=raw.mPBRTextureIndices.get();
+    bool const hasNativePbr=pbrIndices.size()==points.size();
     mesh.uvValid=uv.size()==points.size() &&
         std::all_of(uv.begin()+fromPos,uv.end(),[](auto const& value){
             return std::isfinite(value.x)&&std::isfinite(value.y);
@@ -884,6 +886,7 @@ void captureWorld(BlockTessellator& owner,Tessellator& tess,Block const& block,B
         }
         if(mesh.uvValid){v.u=uv[i].x;v.v=uv[i].y;}
         if(colors.size()==points.size())v.abgr=colors[i];
+        if(hasNativePbr)v.pbrHandle=pbrIndices[i];
         mesh.vertices.emplace_back(v);
     }
     auto const& indices=raw.mIndices.get();

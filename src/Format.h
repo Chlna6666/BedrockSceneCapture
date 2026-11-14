@@ -5,6 +5,9 @@ namespace bsc {
 struct Vertex {
     float x{},y{},z{},nx{},ny{},nz{},u{},v{};
     std::uint32_t abgr{0xffffffffu};
+    // Runtime MeshData::mPBRTextureIndices, if present for every vertex.
+    // Retained only for deterministic UV->material resolution at export.
+    std::uint16_t pbrHandle{0xffffu};
 };
 struct Mesh {
     std::uint32_t cell{}, layer{}, primitive{};
