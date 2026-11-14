@@ -56,7 +56,9 @@ std::string serialize(Geometry const& geometry){
         boxCount+=node.mBoxes.get().size();
     }
     auto const& tex=geometry.mTextureDimensions.get();
-    bool complete=std::isfinite(tex.x)&&std::isfinite(tex.y)&&tex.x>0.f&&tex.y>0.f;
+    if(!std::isfinite(tex.x)||!std::isfinite(tex.y)||
+       tex.x<=0.f||tex.y<=0.f)return {};
+    bool complete=true;
     std::size_t polygonFaces=0;
     std::ostringstream out;
     out.imbue(std::locale::classic());
@@ -69,6 +71,8 @@ std::string serialize(Geometry const& geometry){
     out<<",\"nodes\":[";
     bool firstNode=true;
     for(auto const& [name,node]:nodes){
+        if(!finite3(node.mPivot.get())||!finite3(node.mRot.get())||
+           !finite3(node.mScale.get()))return {};
         if(!firstNode)out<<',';
         firstNode=false;
         out<<"{\"name\":"<<quoted(name)
@@ -78,8 +82,6 @@ std::string serialize(Geometry const& geometry){
            <<",\"pivot\":";vec3(out,node.mPivot.get());
         out<<",\"rotation\":";vec3(out,node.mRot.get());
         out<<",\"scale\":";vec3(out,node.mScale.get());
-        if(!finite3(node.mPivot.get())||!finite3(node.mRot.get())||
-           !finite3(node.mScale.get()))complete=false;
         out<<",\"boxes\":[";
         bool firstBox=true;
         for(auto const& box:node.mBoxes.get()){
@@ -88,6 +90,7 @@ std::string serialize(Geometry const& geometry){
             auto const& rot=box.mRotation.get();
             auto const& pivot=box.mPivot.get();
             if(!finite3(from)||!finite3(size)||!finite3(rot)||!finite3(pivot) ||
+               !std::isfinite(box.mInflate)||
                size.x==0.f||size.y==0.f||size.z==0.f){
                 complete=false;continue;
             }
@@ -111,7 +114,7 @@ std::string serialize(Geometry const& geometry){
                 auto const& uvSize=f.mUVSize.get();
                 if(!std::isfinite(uv.x)||!std::isfinite(uv.y)||
                    !std::isfinite(uvSize.x)||!std::isfinite(uvSize.y))
-                    complete=false;
+                    return {};
                 out<<"{\"valid\":"<<(f.mFaceValid?"true":"false")
                    <<",\"uv\":";vec2(out,uv);
                 out<<",\"uv_size\":";vec2(out,uvSize);
