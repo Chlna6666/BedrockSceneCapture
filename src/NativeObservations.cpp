@@ -103,7 +103,8 @@ std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
 std::unordered_map<std::string,std::string> startupActorModels;
 struct EmptyActorModelProbe {
-    std::size_t parts{},nativeCubes{},sourceBoxes{},polygonFaces{};
+    std::size_t parts{},childParts{},textureMeshes{},modelGeometries{};
+    std::size_t nativeCubes{},sourceBoxes{},polygonFaces{};
 };
 // Startup snapshots survive F6 resets; runtime probes are per recording.
 std::unordered_map<std::string,EmptyActorModelProbe> startupEmptyActorModels;
@@ -206,15 +207,29 @@ std::string modelJson(Model const& model,
     std::ostringstream o;
     o.imbue(std::locale::classic());
     o<<std::setprecision(std::numeric_limits<float>::max_digits10);
-    // Built-in block-actor models may own inline ModelParts absent from mAllParts.
+    // Inline parts are not always present in Model::mAllParts. In addition,
+    // resource-driven models can attach their actual mesh-bearing nodes as
+    // descendants of the named top-level parts. Traverse those descendants
+    // once, retaining the original native parent pointers for serialization.
     std::vector<ModelPart const*> parts;
+    std::unordered_set<ModelPart const*> discovered;
     auto const& registered=model.mAllParts.get();
-    parts.reserve(registered.size()+explicitParts.size());
-    for(auto const* part:registered)if(part)parts.push_back(part);
-    for(auto const* part:explicitParts)
-        if(part && std::find(parts.begin(),parts.end(),part)==parts.end())
+    constexpr std::size_t MaxActorModelParts=4096;
+    parts.reserve(std::min(registered.size()+explicitParts.size(),
+                           MaxActorModelParts));
+    auto append=[&](ModelPart const* part){
+        if(part && parts.size()<MaxActorModelParts && discovered.insert(part).second)
             parts.push_back(part);
+    };
+    for(auto const* part:registered)append(part);
+    for(auto const* part:explicitParts)append(part);
+    auto const roots=parts.size();
+    for(std::size_t i=0;i<parts.size();++i)
+        for(auto const* child:parts[i]->mChildren.get())
+            append(child);
     probe.parts=parts.size();
+    probe.childParts=parts.size()-roots;
+    probe.modelGeometries=model.mGeometries.get().size();
     if(parts.empty())return {};
     std::unordered_map<ModelPart const*,std::size_t> indices;
     for(std::size_t i=0;i<parts.size();++i)if(parts[i])indices.emplace(parts[i],i);
@@ -237,6 +252,10 @@ std::string modelJson(Model const& model,
     for(std::size_t index=0;index<parts.size();++index){
         auto const* part=parts[index];
         if(!part)continue;
+        // The 26.60.5 SDK exposes a separate compiled TextureMesh array.
+        // Its layout is opaque: count it for diagnosis, never reinterpret its
+        // bytes or fabricate polygons from an unverified GPU allocation.
+        probe.textureMeshes+=part->mTextureMeshes.get().size();
         std::size_t missingPartUVs=0,completeSourceUVs=0;
         std::size_t completeNativeUVs=0,incompleteSourcePartUVs=0,unresolvedPartCubes=0;
         if(!firstPart)o<<',';
@@ -1475,7 +1494,9 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
         diagnostics.missingModelProbes.push_back(ActorMissingModelProbe{
             name,startup!=startupEmptyActorModels.end(),
             runtime!=runtimeEmptyActorModels.end(),
-            probe->parts,probe->nativeCubes,probe->sourceBoxes,probe->polygonFaces
+            probe->parts,probe->childParts,probe->textureMeshes,
+            probe->modelGeometries,probe->nativeCubes,
+            probe->sourceBoxes,probe->polygonFaces
         });
     }
     diagnostics.sourceAddBoxHook=installedPartAdd;

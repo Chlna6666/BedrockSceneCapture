@@ -40,7 +40,8 @@ void captureBuiltInModelTemplates(ll::mod::NativeMod& mod);
 struct ActorMissingModelProbe {
     std::string name;
     bool failedAtStartup{},failedAtRuntime{};
-    std::size_t parts{},nativeCubes{},sourceBoxes{},polygonFaces{};
+    std::size_t parts{},childParts{},textureMeshes{},modelGeometries{};
+    std::size_t nativeCubes{},sourceBoxes{},polygonFaces{};
 };
 struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell, piston arm.
