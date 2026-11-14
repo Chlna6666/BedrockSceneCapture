@@ -98,7 +98,7 @@ std::string serialize(Geometry const& geometry){
             out<<",\"rotation\":";vec3(out,rot);
             out<<",\"pivot\":";vec3(out,pivot);
             out<<",\"mirror\":"<<(box.mMirror?"true":"false")
-               <<",\"inflate\":"<<box.mInflate.get()
+               <<",\"inflate\":"<<box.mInflate
                <<",\"uses_face_uv\":"<<(box.mUsesFaceUVs?"true":"false")
                <<",\"texture_offset\":["
                <<box.mTex.get().x<<','<<box.mTex.get().y<<']'
@@ -193,7 +193,7 @@ std::vector<ActorModelSnapshot> extractNativeGeometryResources(GeometryGroup& gr
     for(auto const& [id,info]:registry){
         if(result.size()>=MaxResourceModels)break;
         if(!info)continue;
-        auto const* geo=info->mPtr.get().get();
+        auto const* geo=info->mPtr.get();
         if(!geo)continue;
         auto const& name=geo->mSerializableName.get();
         if(name.empty()||!names.insert(name).second)continue;
