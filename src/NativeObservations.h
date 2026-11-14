@@ -70,6 +70,9 @@ bool installStartupModelCapture(ll::mod::NativeMod& mod);
 void tryStartupModelSnapshot(MinecraftGame& game);
 std::uint64_t nativeResourceGeneration();
 std::size_t startupModelCount();
+// Extract owned source-geometry JSON from the renderer's actual GeometryGroup.
+// Associations to BlockGraphics state IDs are intentionally unverified.
+std::vector<ActorModelSnapshot> snapshotNativeGeometryResources();
 bool installNativeObservations(ll::mod::NativeMod& mod);
 // F7 installs only actor renderers + live model-part hook, not F6 scene capture.
 bool installActorWireframeObservations(ll::mod::NativeMod& mod);

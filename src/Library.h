@@ -85,6 +85,9 @@ struct LibraryData {
     std::filesystem::path directory;
     std::vector<BlockResource> blocks;
     std::vector<StaticModel> staticModels;
+    // Native GeometryGroup resources are owned, exact native definitions.
+    // They are NOT verified BlockGraphics::mModels associations.
+    std::vector<StaticModel> geometryResources;
     std::vector<StaticModel> actorModels;
     std::uint32_t registered{}, visitedChunks{}, skippedChunks{};
     std::uint32_t sampledBlocks{}, failedSamples{};

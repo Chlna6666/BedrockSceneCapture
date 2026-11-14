@@ -25,6 +25,9 @@
 #include "mc/client/model/models/PistonArmModel.h"
 #include "mc/client/model/models/EnchantingBookModel.h"
 #include "mc/client/model/Geometry.h"
+#include "mc/client/model/GeometryGroup.h"
+#include "mc/client/model/GeometryInfo.h"
+#include "GeometryResources.h"
 #include "mc/client/model/geom/ModelPart.h"
 #include "mc/client/model/geom/Cube.h"
 #include "mc/client/renderer/BaseActorRenderContext.h"
@@ -87,6 +90,8 @@ std::atomic_bool startupCachePending{true};
 std::atomic_bool rendererInitializing{false};
 std::atomic<std::uint64_t> resourceGeneration{0};
 std::mutex rendererSnapshotMutex;
+std::mutex geometryResourceMutex;
+std::weak_ptr<GeometryGroup> nativeGeometryGroup;
 // Bit i means the native dispatcher actually rendered renderer-id i during
 // this F6 recording. A registered renderer is NOT a captured UV model.
 std::atomic<std::uint32_t> observedRendererMask{0};
@@ -1238,6 +1243,12 @@ LL_TYPE_INSTANCE_HOOK(BSCBlockActorInitializerHook,ll::memory::HookPriority::Nor
     startupCaptureActive.store(true,std::memory_order_release);
     origin(geometryGroup,std::move(textureGroup),blockTessellator,
            actorDefinitions,resourcePacks,resourceLoader,baseGameVersion,experiments);
+    // Save weak ownership only. No raw renderer or geometry pointer may
+    // survive texture-pack reload or renderer generation changes.
+    {
+        std::lock_guard refLock(geometryResourceMutex);
+        nativeGeometryGroup=geometryGroup->weak_from_this();
+    }
     // The renderer table is initialized here; snapshot its CPU models before
     // any following world render, then drop transient ModelPart address keys.
     captureExistingRendererModels(*this);
@@ -1361,6 +1372,15 @@ std::uint64_t nativeResourceGeneration(){
 std::size_t startupModelCount(){
     std::lock_guard lock(mutex);
     return startupActorModels.size();
+}
+std::vector<ActorModelSnapshot> snapshotNativeGeometryResources(){
+    std::shared_ptr<GeometryGroup> group;
+    {
+        std::lock_guard lock(geometryResourceMutex);
+        group=nativeGeometryGroup.lock();
+    }
+    return group?extractNativeGeometryResources(*group):
+                 std::vector<ActorModelSnapshot>{};
 }
 void tryStartupModelSnapshot(MinecraftGame& game){
     if(!startupCachePending.load(std::memory_order_acquire) ||
@@ -1569,6 +1589,10 @@ void uninstallNativeObservations(){
     }
     startupCaptureActive.store(false,std::memory_order_release);
     startupCachePending.store(false,std::memory_order_release);
+    {
+        std::lock_guard lock(geometryResourceMutex);
+        nativeGeometryGroup.reset();
+    }
     {
         std::lock_guard lock(mutex);
         startupActorModels.clear();

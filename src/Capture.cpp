@@ -359,6 +359,11 @@ void begin(LocalPlayer* player) {
     session->library.definitionOnly=(player==nullptr);
     session->player=player;
     session->resourceGeneration=nativeResourceGeneration();
+    for(auto& resource:snapshotNativeGeometryResources())
+        session->library.geometryResources.emplace_back(
+            StaticModel{std::move(resource.name),std::move(resource.geometryJson)});
+    log().info("F6 GeometryGroup native resources: definitions={} (separate from unexported BlockGraphics::mModels; associations unverified)",
+               session->library.geometryResources.size());
     // Use every registered permutation, not just the states present in loaded chunks.
     auto const& types=BlockTypeRegistry::get().mBlockLookupMap.get();
     // Expand registered permutations incrementally rather than blocking F6 startup.

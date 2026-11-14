@@ -294,6 +294,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
         std::map<std::pair<Mesh const*,std::vector<TextureBinding> const*>,TriangleBindings> memoizedBindings;
         std::map<std::vector<TextureBinding> const*,std::string> memoizedTextureTables;
         std::map<std::string,std::uint32_t> staticModelIndex;
+        std::map<std::string,std::uint32_t> nativeGeometryResourceIndex;
         std::map<std::string, std::uint32_t> statuses;
         std::set<std::string> capturedActorModelKeys;
         for(auto const& actor:data.actorModels)
@@ -313,6 +314,12 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             try{
                 auto const id=pool.intern(PoolKind::Model,model.geometryJson);
                 staticModelIndex.emplace(model.name,id);
+            }catch(std::exception const&){++writeFailures;}
+        }
+        for(auto const& model:data.geometryResources){
+            try{
+                auto const id=pool.intern(PoolKind::Model,model.geometryJson);
+                nativeGeometryResourceIndex.emplace(model.name,id);
             }catch(std::exception const&){++writeFailures;}
         }
         for (auto const& block : data.blocks) {
@@ -574,6 +581,15 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             modelIndex << "{\"name\":" << quoted(name)
                        << ",\"model_ref\":" << id << '}';
         }
+        modelIndex << "],\"native_geometry_sources\":[";
+        bool firstNativeSource=true;
+        for(auto const& [name,id]:nativeGeometryResourceIndex){
+            if(!firstNativeSource)modelIndex<<',';
+            firstNativeSource=false;
+            modelIndex << "{\"name\":" << quoted(name)
+                       << ",\"model_ref\":" << id
+                       << ",\"association_verified\":false}";
+        }
         modelIndex << "]}\n";
         std::ostringstream materials;
         materials << "{\"schema\":1,\"texture_source\":\"local_game_installation\","
@@ -659,6 +675,7 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                  << ",\"shared_material_count\":" << pool.size(PoolKind::Material)
                  << ",\"legacy_meshes_retained\":false"
                  << ",\"static_geometry_models\":" << staticModelIndex.size()
+                 << ",\"native_geometry_sources\":" << nativeGeometryResourceIndex.size()
                  << ",\"unresolved_texture_triangles\":" << unmatchedFaces
                  << ",\"ambiguous_texture_variant_triangles\":" << ambiguousVariantFaces
                  << ",\"sample_contexts\":" << samples
