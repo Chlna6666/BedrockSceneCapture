@@ -102,6 +102,12 @@ std::unordered_set<std::array<std::uint32_t,30>,IdHash> seen;
 std::vector<NativeObservation> pending;
 std::unordered_map<std::string,std::string> actorModels;
 std::unordered_map<std::string,std::string> startupActorModels;
+struct EmptyActorModelProbe {
+    std::size_t parts{},nativeCubes{},sourceBoxes{},polygonFaces{};
+};
+// Startup snapshots survive F6 resets; runtime probes are per recording.
+std::unordered_map<std::string,EmptyActorModelProbe> startupEmptyActorModels;
+std::unordered_map<std::string,EmptyActorModelProbe> runtimeEmptyActorModels;
 // Capture native box inputs at model construction, before their CPU Cube
 // definitions can be compacted into GPU meshes. These are not synthetic AABBs.
 struct SourceBoxes {
@@ -195,7 +201,8 @@ void addActorColor(NativeTextureResources& out,
 }
 std::string modelJson(Model const& model,
                       std::vector<ModelPart const*> const& explicitParts,
-                      NativeTextureResources const& resources){
+                      NativeTextureResources const& resources,
+                      EmptyActorModelProbe& probe){
     std::ostringstream o;
     o.imbue(std::locale::classic());
     o<<std::setprecision(std::numeric_limits<float>::max_digits10);
@@ -207,6 +214,7 @@ std::string modelJson(Model const& model,
     for(auto const* part:explicitParts)
         if(part && std::find(parts.begin(),parts.end(),part)==parts.end())
             parts.push_back(part);
+    probe.parts=parts.size();
     if(parts.empty())return {};
     std::unordered_map<ModelPart const*,std::size_t> indices;
     for(std::size_t i=0;i<parts.size();++i)if(parts[i])indices.emplace(parts[i],i);
@@ -407,6 +415,9 @@ std::string modelJson(Model const& model,
      <<(unresolvedCubes==0 && incompleteSourceUVs==0 &&
         incompleteNativeUVs==0 && invalidPolygonMeshes==0?"true":"false")
      <<"}\n";
+    probe.nativeCubes=cubes;
+    probe.sourceBoxes=sourceBoxCount;
+    probe.polygonFaces=polyFaces;
     return cubes||polyFaces||sourceBoxCount?o.str():std::string{};
 }
 void recordActor(char const* label,Model const& model,
@@ -432,8 +443,14 @@ void recordActor(char const* label,Model const& model,
         if(it!=actorLastAttempt.end() && now-it->second<std::chrono::seconds(1))return;
         actorLastAttempt[std::string(label)]=now;
     }
-    auto json=modelJson(model,explicitParts,resources);
-    if(json.empty())return;
+    EmptyActorModelProbe probe;
+    auto json=modelJson(model,explicitParts,resources,probe);
+    auto& emptyModels=prewarming?startupEmptyActorModels:runtimeEmptyActorModels;
+    if(json.empty()){
+        emptyModels[std::string(label)]=probe;
+        return;
+    }
+    emptyModels.erase(label);
     if(existing!=models.end()){
         if(!complete(json))return;
         existing->second=std::move(json);
@@ -1193,6 +1210,7 @@ LL_TYPE_INSTANCE_HOOK(BSCBlockActorInitializerHook,ll::memory::HookPriority::Nor
     {
         std::lock_guard lock(mutex);
         startupActorModels.clear();
+        startupEmptyActorModels.clear();
     }
     {
         std::lock_guard lock(sourceBoxesMutex);
@@ -1448,6 +1466,18 @@ ActorCaptureDiagnostics actorCaptureDiagnostics(){
             diagnostics.observedWithoutGeometry.push_back(label);
     std::sort(diagnostics.observedWithoutGeometry.begin(),diagnostics.observedWithoutGeometry.end());
     std::sort(diagnostics.observedIncompleteGeometry.begin(),diagnostics.observedIncompleteGeometry.end());
+    for(auto const& name:diagnostics.observedWithoutGeometry){
+        auto const runtime=runtimeEmptyActorModels.find(name);
+        auto const startup=startupEmptyActorModels.find(name);
+        auto const* probe=runtime!=runtimeEmptyActorModels.end()?&runtime->second:
+            (startup!=startupEmptyActorModels.end()?&startup->second:nullptr);
+        if(!probe)continue;
+        diagnostics.missingModelProbes.push_back(ActorMissingModelProbe{
+            name,startup!=startupEmptyActorModels.end(),
+            runtime!=runtimeEmptyActorModels.end(),
+            probe->parts,probe->nativeCubes,probe->sourceBoxes,probe->polygonFaces
+        });
+    }
     diagnostics.sourceAddBoxHook=installedPartAdd;
     diagnostics.sourceLoadBoxesHook=installedPartLoad;
     diagnostics.sourceCompileCubesHook=installedPartCompile;
@@ -1480,6 +1510,7 @@ void clearNativeObservations(){
     rejectedDuplicate.store(0,std::memory_order_relaxed);
     rejectedLockBusy.store(0,std::memory_order_relaxed);
     actorLastAttempt.clear();
+    runtimeEmptyActorModels.clear();
     pending.clear();
     actorModels.clear();
     // Source-box keys are raw ModelPart addresses. Never carry an address
@@ -1520,6 +1551,8 @@ void uninstallNativeObservations(){
     {
         std::lock_guard lock(mutex);
         startupActorModels.clear();
+        startupEmptyActorModels.clear();
+        runtimeEmptyActorModels.clear();
     }
     armed.store(false,std::memory_order_release);
     if(installedPartCompile){BSCPartCompileCubesHook::unhook();installedPartCompile=false;}

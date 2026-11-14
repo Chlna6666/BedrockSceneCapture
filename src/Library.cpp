@@ -322,11 +322,16 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
                 reason="neighbor-dependent geometry; samples do not constitute a complete offline rule";
             } else {
                 stateStatus="partial";
+                bool const nativeSceneObserved=std::any_of(
+                    block.samples.begin(),block.samples.end(),
+                    [](auto const& sample){return sample.nativeObserved;});
                 reason=block.hasGeometryAlias
                     ? "audio-only state refers to canonical visual geometry"
-                    : (block.samples.empty()
-                        ? "non-box native shape requires geometry rules or engine tessellation"
-                        : "native visual bounds triangulated; scene-specific tessellation not verified");
+                    : (nativeSceneObserved
+                        ? "native scene tessellation observed; other neighborhoods or material states remain unverified"
+                        : (block.samples.empty()
+                            ? "non-box native shape requires geometry rules or engine tessellation"
+                            : "native visual bounds proxy only; scene-specific tessellation not observed"));
             }
             ++statuses[stateStatus];
             if (!firstBlock) blocks << ',';
@@ -340,7 +345,20 @@ bool saveLibrary(LibraryData const& data, std::string& error) {
             blocks << ",\"legacy_data\":" << block.legacyData
                    << ",\"status\":" << quoted(stateStatus)
                    << ",\"native_render_layer\":" << block.renderLayer
-                   << ",\"block_actor_type\":" << block.blockActorType
+                   << ",\"render_layer_source\":\"block_graphics_registry_default\""
+                   << ",\"observed_native_render_layers\":[";
+            std::set<std::uint32_t> effectiveLayers;
+            for(auto const& sample:block.samples)
+                if(sample.nativeObserved)
+                    for(auto const& mesh:sample.meshes)
+                        if(mesh)effectiveLayers.insert(mesh->layer);
+            bool firstEffectiveLayer=true;
+            for(auto const layer:effectiveLayers){
+                if(!firstEffectiveLayer)blocks<<',';
+                firstEffectiveLayer=false;
+                blocks<<layer;
+            }
+            blocks << "],\"block_actor_type\":" << block.blockActorType
                    << ",\"actor_model_keys\":[";
             bool firstActorKey=true;
             for(auto const& key:block.actorModelKeys){

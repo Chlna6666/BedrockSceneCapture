@@ -37,6 +37,11 @@ NativeSceneDiagnostics nativeSceneDiagnostics();
 // Recreate selected built-in CPU model definitions after source-box hooks are active.
 // Used only on explicit F6, never during mod startup.
 void captureBuiltInModelTemplates(ll::mod::NativeMod& mod);
+struct ActorMissingModelProbe {
+    std::string name;
+    bool failedAtStartup{},failedAtRuntime{};
+    std::size_t parts{},nativeCubes{},sourceBoxes{},polygonFaces{};
+};
 struct ActorCaptureDiagnostics {
     // chest, standing sign, hanging sign, bed, shulker box, bell, piston arm.
     std::array<bool,7> hooksInstalled{};
@@ -55,6 +60,7 @@ struct ActorCaptureDiagnostics {
     std::size_t retainedSourceBoxes{};
     std::vector<std::string> observedWithoutGeometry;
     std::vector<std::string> observedIncompleteGeometry;
+    std::vector<ActorMissingModelProbe> missingModelProbes;
 };
 ActorCaptureDiagnostics actorCaptureDiagnostics();
 // Install after LeviLamina enables mods, never inside DllMain. Snapshots are
