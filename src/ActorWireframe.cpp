@@ -73,6 +73,9 @@ std::atomic<std::uint64_t> partsCalled{},partsWithCpuGeometry{},partsWithValidTr
     missingCpuGeometry{},discardedTransforms{},emittedSegments{};
 bool installed{};
 bool installedAtPosition{};
+// Render callbacks may run off the hook-installation thread. Keep the
+// hot-path capability check atomic, without reading installation flags.
+std::atomic_bool partHooksAvailable{false};
 
 bool finite(glm::vec3 const& v){
     return std::isfinite(v.x)&&std::isfinite(v.y)&&std::isfinite(v.z);
@@ -289,7 +292,11 @@ ActorWireframeScope::ActorWireframeScope(BaseActorRenderContext& ctx,
     }()){}
 ActorWireframeScope::ActorWireframeScope(BlockPos const& position,
                                          Vec3 const& relative,Vec3 const& camera){
-    if(!(gPreviewEnabled.load(std::memory_order_relaxed)||
+    // Without either native ModelPart hook no call can consume this scope.
+    // Avoid millions of pointless TLS vector pushes/pops while F6 observes
+    // the scene on game builds that do not export these two symbols.
+    if(!partHooksAvailable.load(std::memory_order_acquire) ||
+       !(gPreviewEnabled.load(std::memory_order_relaxed)||
          gCapturePreviewEnabled.load(std::memory_order_relaxed)))return;
     ActorContext actor;
     actor.world={static_cast<float>(position.x),
@@ -347,9 +354,12 @@ bool installActorWireframePartHook(ll::mod::NativeMod& mod){
         if(installedAtPosition)mod.getLogger().info("F7/F6 BlockEntity ModelPart::renderAtPosition hook OK");
         else mod.getLogger().warn("F7/F6 BlockEntity ModelPart::renderAtPosition hook FAILED, hook_status={}",status);
     }
-    return installed || installedAtPosition;
+    bool const available=installed || installedAtPosition;
+    partHooksAvailable.store(available,std::memory_order_release);
+    return available;
 }
 void uninstallActorWireframePartHook(){
+    partHooksAvailable.store(false,std::memory_order_release);
     if(installed){BSCActorPartWireHook::unhook();installed=false;}
     if(installedAtPosition){
         BSCActorPartAtPositionWireHook::unhook();
