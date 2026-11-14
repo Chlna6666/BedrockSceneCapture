@@ -225,6 +225,7 @@ std::string modelJson(Model const& model,
     bool firstPart=true;
     std::size_t cubes=0,polyFaces=0,sourceBoxCount=0,unresolvedCubes=0;
     std::size_t incompleteSourceUVs=0,incompleteNativeUVs=0;
+    std::size_t invalidPolygonMeshes=0;
     for(std::size_t index=0;index<parts.size();++index){
         auto const* part=parts[index];
         if(!part)continue;
@@ -331,9 +332,20 @@ std::string modelJson(Model const& model,
             });
         if((!tris.empty()||!quads.empty()) && !polygonUVComplete)
             ++incompleteNativeUVs;
+        // Never silently skip invalid polygons and still report complete
+        // geometry. Non-finite native values would also corrupt JSON.
         bool valid=!positions.empty() && positions.size()<=65536 &&
                    normals.size()<=65536 && uvs.size()<=65536 &&
-                   tris.size()+quads.size()<=65536;
+                   tris.size()+quads.size()<=65536 &&
+                   std::all_of(positions.begin(),positions.end(),[](auto const& p){
+                       return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z);
+                   }) &&
+                   std::all_of(normals.begin(),normals.end(),[](auto const& p){
+                       return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z);
+                   }) &&
+                   std::all_of(uvs.begin(),uvs.end(),[](auto const& uv){
+                       return std::isfinite(uv.x)&&std::isfinite(uv.y);
+                   });
         auto validVertex=[&](Geometry::NodeVertex const& v){
             return v.mPositionIndex<positions.size() &&
                    (normals.empty()||v.mNormalIndex<normals.size()) &&
@@ -345,6 +357,8 @@ std::string modelJson(Model const& model,
             for(auto const& quad:quads)for(auto const& v:quad)
                 if(!validVertex(v))valid=false;
         }
+        if((!tris.empty()||!quads.empty()) && !valid)
+            ++invalidPolygonMeshes;
         if(valid && (!tris.empty()||!quads.empty())){
             polyFaces+=tris.size()+quads.size();
             o<<",\"poly_mesh\":{\"positions\":[";
@@ -388,8 +402,10 @@ std::string modelJson(Model const& model,
     o<<"],\"unresolved_compiled_cubes\":"<<unresolvedCubes
      <<",\"incomplete_source_uv_boxes\":"<<incompleteSourceUVs
      <<",\"incomplete_native_uv\":"<<incompleteNativeUVs
+     <<",\"invalid_polygon_meshes\":"<<invalidPolygonMeshes
      <<",\"geometry_complete\":"
-     <<(unresolvedCubes==0 && incompleteSourceUVs==0 && incompleteNativeUVs==0?"true":"false")
+     <<(unresolvedCubes==0 && incompleteSourceUVs==0 &&
+        incompleteNativeUVs==0 && invalidPolygonMeshes==0?"true":"false")
      <<"}\n";
     return cubes||polyFaces||sourceBoxCount?o.str():std::string{};
 }
